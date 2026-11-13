@@ -15,6 +15,10 @@
   --surface-2: #f0f0f3;
   --field-bg: rgba(118, 118, 128, 0.08);
   --field-bg-focus: #ffffff;
+  --seg-track: rgba(118, 118, 128, 0.12);
+  --seg-thumb: #ffffff;
+  --seg-thumb-border: rgba(0, 0, 0, 0.05);
+  --seg-thumb-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
   --line: rgba(60, 60, 67, 0.14);
   --material: rgba(255, 255, 255, 0.78);
 
@@ -44,6 +48,10 @@
   --surface-2: #2c2c2e;
   --field-bg: rgba(118, 118, 128, 0.24);
   --field-bg-focus: rgba(118, 118, 128, 0.34);
+  --seg-track: rgba(118, 118, 128, 0.24);
+  --seg-thumb: #58585c;
+  --seg-thumb-border: rgba(255, 255, 255, 0.14);
+  --seg-thumb-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
   --line: rgba(235, 235, 245, 0.14);
   --material: rgba(28, 28, 30, 0.82);
 
@@ -70,6 +78,10 @@
     --surface-2: #2c2c2e;
     --field-bg: rgba(118, 118, 128, 0.24);
     --field-bg-focus: rgba(118, 118, 128, 0.34);
+    --seg-track: rgba(118, 118, 128, 0.24);
+    --seg-thumb: #58585c;
+    --seg-thumb-border: rgba(255, 255, 255, 0.14);
+    --seg-thumb-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
     --line: rgba(235, 235, 245, 0.14);
     --material: rgba(28, 28, 30, 0.82);
     --ink: #f5f5f7;
@@ -107,6 +119,8 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-field-bg: var(--field-bg);
+  --color-seg-track: var(--seg-track);
+  --color-seg-thumb: var(--seg-thumb);
   --color-line: var(--line);
   --color-material: var(--material);
   --color-ink: var(--ink);
@@ -131,82 +145,102 @@
 html {
   background: var(--bg);
   color: var(--ink);
+  scroll-behavior: smooth;
+  overflow-x: clip;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+}
+
+:where(button, a, [role="radio"], [role="option"], summary) {
+  touch-action: manipulation;
 }
 
 body {
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--ink);
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Numbers never jitter when prices change. */
-.num {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-}
-
-/* Translucent "material" for the nav bars and sheets. Used sparingly. */
-.material {
-  background: var(--material);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
-}
-
-/* Apple HIG text fields, selects, and pickers (44pt touch target, 16px on
-   mobile to prevent iOS Safari auto-zoom, 15px on desktop, soft blue halo). */
-.field-input {
-  height: 2.75rem;
-  width: 100%;
-  min-width: 0;
-  border-radius: 11px;
-  border: 1px solid var(--line);
-  background: var(--field-bg);
-  padding-inline: 0.8125rem;
-  font-size: 16px;
-  line-height: 1.25rem;
-  color: var(--ink);
-  outline: none;
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease,
-    box-shadow 150ms ease;
-}
-
-@media (min-width: 640px) {
-  .field-input {
-    font-size: 15px;
+@layer components {
+  /* Numbers never jitter when prices change. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
-}
 
-.field-input::placeholder {
-  color: var(--ink-3);
-}
+  /* Translucent "material" for the nav bars and sheets. Used sparingly. */
+  .material {
+    background: var(--material);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+  }
 
-.field-input:focus,
-.field-input:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--field-bg-focus);
-  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 24%, transparent);
-}
+  /* Apple HIG text fields, selects, and pickers (44pt touch target, 16px on
+     mobile to prevent iOS Safari auto-zoom, 15px on desktop, soft blue halo).
+     Placed inside @layer components so Tailwind utilities like pl-9, pr-9, and
+     h-9.5 cleanly override default padding and sizing. */
+  .field-input {
+    height: 2.75rem;
+    width: 100%;
+    min-width: 0;
+    border-radius: 11px;
+    border: 1px solid var(--line);
+    background: var(--field-bg);
+    padding-inline: 0.8125rem;
+    font-size: 16px;
+    line-height: 1.25rem;
+    color: var(--ink);
+    outline: none;
+    transition:
+      border-color 150ms ease,
+      background-color 150ms ease,
+      box-shadow 150ms ease;
+  }
 
-.field-input[aria-invalid="true"] {
-  border-color: var(--loss);
-}
+  @media (min-width: 640px) {
+    .field-input {
+      font-size: 15px;
+    }
+  }
 
-.field-input[aria-invalid="true"]:focus,
-.field-input[aria-invalid="true"]:focus-visible {
-  border-color: var(--loss);
-  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--loss) 22%, transparent);
-}
+  .field-input::placeholder {
+    color: var(--ink-3);
+  }
 
-.field-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  .field-input:focus,
+  .field-input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--field-bg-focus);
+    box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+
+  .field-input[aria-invalid="true"] {
+    border-color: var(--loss);
+  }
+
+  .field-input[aria-invalid="true"]:focus,
+  .field-input[aria-invalid="true"]:focus-visible {
+    border-color: var(--loss);
+    box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--loss) 22%, transparent);
+  }
+
+  .field-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Normalize iOS/macOS WebKit date & time inputs inside flex/grid cells. */
@@ -223,11 +257,10 @@ input[type="time"]::-webkit-date-and-time-value {
 }
 
 /* Smooth keyboard focus ring for buttons, links, and interactive controls
-   (form inputs handle their own Apple focus halo). */
+   (preserves each control's own rounded radius; inputs use their Apple halo). */
 :where(button, a, [role="radio"], [role="option"], summary):focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
   outline-offset: 2px;
-  border-radius: 8px;
   transition: outline-offset 150ms ease;
 }
 
@@ -271,5 +304,13 @@ textarea:focus-visible {
   }
   .skeleton {
     animation: none;
+  }
+}
+
+/* Keep form controls >= 16px on small viewports to prevent iOS Safari focus zoom,
+ * even when components add compact desktop font-size utilities. */
+@media (max-width: 639px) {
+  .field-input {
+    font-size: 16px;
   }
 }

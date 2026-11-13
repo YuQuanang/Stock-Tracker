@@ -33,6 +33,7 @@ export interface UseQuotesPollOptions {
   symbols: readonly string[];
   includeSparklines?: boolean;
   enabled?: boolean;
+  skipInitialFetch?: boolean;
   initialQuotes?: Record<string, ResolvedInstrumentQuote>;
   initialFxUsdToSgd?: ExchangeRateSnapshot | null;
   initialMarket?: CombinedMarketOverview;
@@ -44,9 +45,13 @@ export interface UseQuotesPollResult {
   market: CombinedMarketOverview;
   isLoading: boolean;
   isRefreshing: boolean;
+  isRetrying: boolean;
   error: string | null;
   lastUpdatedAt: string | null;
   refreshNow: () => Promise<void>;
+  retrySymbols: (
+    targetSymbols: readonly string[],
+  ) => Promise<Record<string, ResolvedInstrumentQuote> | null>;
 }
 
 const CLOSED_FOCUS_REFRESH_AGE_MS = 5 * 60 * 1000; // 5 minutes
@@ -56,6 +61,7 @@ export function useQuotesPoll(
 ): UseQuotesPollResult {
   const enabled = options.enabled ?? true;
   const includeSparklines = options.includeSparklines ?? false;
+  const skipInitialFetch = options.skipInitialFetch ?? false;
 
   // Canonicalize symbol list so array identity changes never re-trigger fetches.
   const symbolsKey = useMemo(() => {
@@ -81,8 +87,14 @@ export function useQuotesPoll(
       Object.keys(options.initialQuotes ?? {}).length === 0,
   );
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+
+  const quotesRef = useRef<Record<string, ResolvedInstrumentQuote>>(quotes);
+  useEffect(() => {
+    quotesRef.current = quotes;
+  }, [quotes]);
 
   const lastFetchedMsRef = useRef<number>(0);
   const requestSeqRef = useRef<number>(0);
@@ -96,6 +108,15 @@ export function useQuotesPoll(
       return;
     }
     if (!symbolsKey) {
+      setMarket(getCombinedMarketOverview());
+      setIsLoading(false);
+      return;
+    }
+
+    const pollableSymbols = symbolsKey
+      .split(",")
+      .filter((sym) => !quotesRef.current[sym]?.priceNotFound);
+    if (pollableSymbols.length === 0) {
       setMarket(getCombinedMarketOverview());
       setIsLoading(false);
       return;
@@ -115,7 +136,9 @@ export function useQuotesPoll(
     }
 
     try {
-      const searchParams = new URLSearchParams({ symbols: symbolsKey });
+      const searchParams = new URLSearchParams({
+        symbols: pollableSymbols.join(","),
+      });
       if (includeSparklines) {
         searchParams.set("sparklines", "1");
       }
@@ -169,6 +192,9 @@ export function useQuotesPoll(
 
   // 1. Initial fetch whenever enabled or tracked symbol set changes
   useEffect(() => {
+    if (skipInitialFetch) {
+      return;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) {
@@ -179,7 +205,7 @@ export function useQuotesPoll(
       cancelled = true;
       abortRef.current?.abort();
     };
-  }, [fetchBatch]);
+  }, [fetchBatch, skipInitialFetch]);
 
   // 2. Adaptive short-polling loop (runs ONLY while at least one market is open)
   useEffect(() => {
@@ -264,14 +290,65 @@ export function useQuotesPoll(
     };
   }, [enabled, symbolsKey, fetchBatch]);
 
+  const retrySymbols = useCallback(
+    async (
+      targetSymbols: readonly string[],
+    ): Promise<Record<string, ResolvedInstrumentQuote> | null> => {
+      const cleaned = [
+        ...new Set(targetSymbols.map((s) => s.trim()).filter(Boolean)),
+      ];
+      if (cleaned.length === 0) {
+        return null;
+      }
+      setIsRetrying(true);
+      try {
+        const searchParams = new URLSearchParams({
+          symbols: cleaned.join(","),
+          retryNotFound: "1",
+        });
+        if (includeSparklines) {
+          searchParams.set("sparklines", "1");
+        }
+        const response = await fetch(`/api/quotes?${searchParams.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setError(body?.error ?? "Could not retry market quote lookup.");
+          return null;
+        }
+        const payload = (await response.json()) as QuotesBatchApiResponse;
+        setQuotes((prev) => ({ ...prev, ...payload.quotes }));
+        if (payload.fxUsdToSgd) {
+          setFxUsdToSgd(payload.fxUsdToSgd);
+        }
+        setMarket(payload.market);
+        setLastUpdatedAt(payload.fetchedAt);
+        setError(null);
+        return payload.quotes;
+      } catch {
+        setError("Network error while retrying market quote lookup.");
+        return null;
+      } finally {
+        setIsRetrying(false);
+      }
+    },
+    [includeSparklines],
+  );
+
   return {
     quotes,
     fxUsdToSgd,
     market,
     isLoading,
     isRefreshing,
+    isRetrying,
     error,
     lastUpdatedAt,
     refreshNow: fetchBatch,
+    retrySymbols,
   };
 }

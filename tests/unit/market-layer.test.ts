@@ -1,5 +1,6 @@
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -459,6 +460,148 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
     // Unseen ticker with no cached `price_bar` honestly reports `unavailable`
     expect(offlineBatch.UNSEEN_TICKER.status).toBe("unavailable");
     expect(offlineBatch.UNSEEN_TICKER.price).toBeNull();
+  });
+
+  it("persists priceNotFoundAt on 404, skips repeat HTTP calls across cache clears, ignores transient outages, and clears on retryNotFound recovery", async () => {
+    const saturday = new Date("2026-11-07T14:00:00Z");
+
+    await findOrCreateInstrument(
+      { symbol: "MISSING.SI", name: "Delisted REIT", currency: "SGD" },
+      db,
+    );
+    await findOrCreateInstrument(
+      { symbol: "FLAKY", name: "Transient Network Co", currency: "USD" },
+      db,
+    );
+
+    let missingRequests = 0;
+    const notFoundFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("MISSING.SI")) {
+        missingRequests += 1;
+        return new Response(
+          JSON.stringify({
+            chart: {
+              result: null,
+              error: { code: "Not Found", description: "No data found" },
+            },
+          }),
+          { status: 404, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("Internal Server Error", { status: 500 });
+    };
+
+    // 1. First lookup: MISSING.SI returns 404 -> persisted as priceNotFoundAt;
+    //    FLAKY returns 500 -> transient failure, must NOT be marked priceNotFoundAt.
+    const firstBatch = await resolveQuotesForSymbols({
+      symbols: ["MISSING.SI", "FLAKY"],
+      db,
+      now: saturday,
+      fetchImpl: notFoundFetch,
+      chain: new ProviderChain(),
+    });
+
+    expect(firstBatch["MISSING.SI"].status).toBe("unavailable");
+    expect(firstBatch["MISSING.SI"].price).toBeNull();
+    expect(firstBatch["MISSING.SI"].priceNotFound).toBe(true);
+    expect(firstBatch.FLAKY.price).toBeNull();
+    expect(firstBatch.FLAKY.priceNotFound).toBeFalsy();
+    expect(missingRequests).toBeGreaterThan(0);
+
+    const [missingRow] = await db
+      .select()
+      .from(schema.instrument)
+      .where(eq(schema.instrument.symbol, "MISSING.SI"));
+    expect(missingRow.priceNotFoundAt).not.toBeNull();
+    expect(missingRow.priceNotFoundReason).toBeTruthy();
+
+    const [flakyRow] = await db
+      .select()
+      .from(schema.instrument)
+      .where(eq(schema.instrument.symbol, "FLAKY"));
+    expect(flakyRow.priceNotFoundAt).toBeNull();
+
+    // 2. Even after clearing memory quote & history caches (like a cold restart),
+    //    both batch quotes and daily bar sync short-circuit with 0 HTTP requests.
+    clearQuoteCache();
+    clearHistoryCaches();
+    missingRequests = 0;
+
+    const repeatBatch = await resolveQuotesForSymbols({
+      symbols: ["MISSING.SI"],
+      db,
+      now: saturday,
+      fetchImpl: notFoundFetch,
+      chain: new ProviderChain(),
+    });
+    expect(repeatBatch["MISSING.SI"].status).toBe("unavailable");
+    expect(repeatBatch["MISSING.SI"].priceNotFound).toBe(true);
+    expect(missingRequests).toBe(0);
+
+    await ensureInstrumentDailyBars({
+      symbol: "MISSING.SI",
+      startDate: "2026-10-01",
+      endDate: "2026-11-06",
+      db,
+      now: saturday,
+      fetchImpl: notFoundFetch,
+    });
+    expect(missingRequests).toBe(0);
+
+    // 3. Explicit retryNotFound=true queries live providers and clears DB flag on recovery
+    let recoveredRequests = 0;
+    const recoveredFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("query1.finance.yahoo.com") && url.includes("MISSING.SI")) {
+        recoveredRequests += 1;
+        return new Response(
+          JSON.stringify({
+            chart: {
+              result: [
+                {
+                  meta: {
+                    currency: "SGD",
+                    symbol: "MISSING.SI",
+                    exchangeName: "SES",
+                    regularMarketPrice: 1.25,
+                    chartPreviousClose: 1.2,
+                    regularMarketTime: Math.floor(
+                      new Date("2026-11-06T09:00:00Z").getTime() / 1000,
+                    ),
+                  },
+                },
+              ],
+              error: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    const retryBatch = await resolveQuotesForSymbols({
+      symbols: ["MISSING.SI"],
+      db,
+      now: saturday,
+      fetchImpl: recoveredFetch,
+      chain: new ProviderChain(),
+      skipCache: true,
+      retryNotFound: true,
+    });
+
+    expect(recoveredRequests).toBe(1);
+    expect(retryBatch["MISSING.SI"].status).toBe("last_close");
+    expect(retryBatch["MISSING.SI"].price).toBe("1.25");
+    expect(retryBatch["MISSING.SI"].priceNotFound).toBeFalsy();
+
+    const [clearedRow] = await db
+      .select()
+      .from(schema.instrument)
+      .where(eq(schema.instrument.symbol, "MISSING.SI"));
+    expect(clearedRow.priceNotFoundAt).toBeNull();
+    expect(clearedRow.priceNotFoundReason).toBeNull();
   });
 });
 

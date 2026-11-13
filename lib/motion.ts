@@ -4,26 +4,26 @@
  */
 import type { Transition } from "framer-motion";
 
-/** Default for layout changes, list reordering and shared-element morphs. */
+/** Default for layout changes, sheets, dialogs, and drawer transitions. */
 export const springSmooth: Transition = {
   type: "spring",
-  stiffness: 380,
-  damping: 38,
-  mass: 0.9,
+  stiffness: 460,
+  damping: 42,
+  mass: 0.78,
 };
 
-/** Slightly firmer, for small controls such as segmented-control thumbs. */
+/** Instant, crisp feedback for segmented controls, nav pills, and button taps. */
 export const springSnappy: Transition = {
   type: "spring",
-  stiffness: 520,
-  damping: 42,
-  mass: 0.7,
+  stiffness: 580,
+  damping: 46,
+  mass: 0.65,
 };
 
-/** For quick fades and opacity changes. */
+/** Fast Apple ease-out curve for overlays, route cross-fades, and tab switches. */
 export const fadeQuick: Transition = {
-  duration: 0.18,
-  ease: [0.25, 0.1, 0.25, 1],
+  duration: 0.14,
+  ease: [0.22, 1, 0.36, 1],
 };
 
 /** Delay between items in staggered list entrances, in seconds. */

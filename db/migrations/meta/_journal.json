@@ -15,6 +15,13 @@
       "when": 1794027691798,
       "tag": "0001_common_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794581740585,
+      "tag": "0002_clumsy_bloodaxe",
+      "breakpoints": true
     }
   ]
 }

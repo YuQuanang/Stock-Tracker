@@ -68,6 +68,8 @@ export interface SerializedFifoBucket {
   assetType: string;
   manualPrice: string | null;
   isDelisted: boolean;
+  priceNotFound?: boolean;
+  priceNotFoundReason?: string | null;
   sharesHeld: string;
   openCostBasis: string;
   openCostBasisInBase: string | null;
@@ -93,6 +95,7 @@ export interface ValuedHoldingRow {
   assetType: string;
   manualPrice: string | null;
   isDelisted: boolean;
+  priceNotFound: boolean;
   portfolioIds: string[];
   portfolioNames: string[];
 
@@ -217,6 +220,8 @@ export function buildValuedHoldings(params: {
       assetType: string;
       manualPrice: string | null;
       isDelisted: boolean;
+      priceNotFound: boolean;
+      priceNotFoundReason: string | null;
       portfolioIds: string[];
       portfolioNames: string[];
       sharesHeld: DecimalValue;
@@ -260,6 +265,8 @@ export function buildValuedHoldings(params: {
         assetType: b.assetType,
         manualPrice: b.manualPrice,
         isDelisted: b.isDelisted,
+        priceNotFound: Boolean(b.priceNotFound),
+        priceNotFoundReason: b.priceNotFoundReason ?? null,
         portfolioIds: [b.portfolioId],
         portfolioNames: [b.portfolioName],
         sharesHeld: shares,
@@ -431,13 +438,20 @@ export function buildValuedHoldings(params: {
       );
     }
 
+    const isPriceNotFound =
+      valuation.unitPrice === null &&
+      group.assetType !== "crypto" &&
+      !group.isDelisted &&
+      Boolean(group.priceNotFound || quote?.priceNotFound);
+
     const freshnessLabel = group.isDelisted
       ? group.manualPrice
         ? "Marked delisted (manual)"
         : "Marked worthless ($0)"
       : group.manualPrice !== null
         ? "Manual price"
-        : (quote?.freshnessLabel ?? "Price unavailable");
+        : (quote?.freshnessLabel ??
+           (isPriceNotFound ? "Price not found" : "Price unavailable"));
 
     return {
       key: group.key,
@@ -449,6 +463,7 @@ export function buildValuedHoldings(params: {
       assetType: group.assetType,
       manualPrice: group.manualPrice,
       isDelisted: group.isDelisted,
+      priceNotFound: isPriceNotFound,
       portfolioIds: group.portfolioIds,
       portfolioNames: group.portfolioNames,
 
@@ -466,7 +481,8 @@ export function buildValuedHoldings(params: {
       unitPrice: toNullableDecimalString(valuation.unitPrice, 6),
       priceSource: valuation.priceSource,
       freshnessLabel,
-      unavailableReason: quote?.unavailableReason ?? null,
+      unavailableReason:
+        quote?.unavailableReason ?? group.priceNotFoundReason ?? null,
       sparklineCloses: quote?.sparklineCloses ?? [],
 
       marketValue: toNullableDecimalString(valuation.marketValue, 6),

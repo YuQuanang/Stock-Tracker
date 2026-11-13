@@ -11,13 +11,44 @@ interface CacheEntry<V> {
   expiresAt: number;
 }
 
+interface SharedBucket {
+  store: Map<string, CacheEntry<unknown>>;
+  inFlight: Map<string, Promise<unknown>>;
+}
+
+function getSharedBucket(namespace: string): SharedBucket | null {
+  if (typeof process !== "undefined" && process.env.VITEST) {
+    return null;
+  }
+  const host = globalThis as typeof globalThis & {
+    __folioTtlCaches?: Map<string, SharedBucket>;
+  };
+  if (!host.__folioTtlCaches) {
+    host.__folioTtlCaches = new Map();
+  }
+  let bucket = host.__folioTtlCaches.get(namespace);
+  if (!bucket) {
+    bucket = { store: new Map(), inFlight: new Map() };
+    host.__folioTtlCaches.set(namespace, bucket);
+  }
+  return bucket;
+}
+
 export class TtlCache<V> {
-  private readonly store = new Map<string, CacheEntry<V>>();
-  private readonly inFlight = new Map<string, Promise<V>>();
+  private readonly store: Map<string, CacheEntry<V>>;
+  private readonly inFlight: Map<string, Promise<V>>;
   private readonly maxEntries: number;
 
-  constructor(maxEntries: number = 250) {
+  constructor(maxEntries: number = 250, namespace?: string) {
     this.maxEntries = maxEntries;
+    const shared = namespace ? getSharedBucket(namespace) : null;
+    if (shared) {
+      this.store = shared.store as Map<string, CacheEntry<V>>;
+      this.inFlight = shared.inFlight as Map<string, Promise<V>>;
+    } else {
+      this.store = new Map<string, CacheEntry<V>>();
+      this.inFlight = new Map<string, Promise<V>>();
+    }
   }
 
   get(key: string, now: number = Date.now()): V | undefined {

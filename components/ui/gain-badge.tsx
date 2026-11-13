@@ -7,7 +7,7 @@ interface GainBadgeProps {
   currency?: string;
   /** Signed percentage, e.g. `"12.4"` or `"-3.15"`. */
   percent?: string | number | null;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   pill?: boolean;
 }
 
@@ -31,8 +31,15 @@ export function GainBadge({
         ? Number(percent)
         : Number.NaN;
 
+  const nullSizeClass =
+    size === "lg"
+      ? "text-[16px] font-semibold"
+      : size === "md"
+        ? "text-[13.5px] font-medium"
+        : "text-[12.5px] font-medium";
+
   if (!Number.isFinite(numericBasis)) {
-    return <span className="num text-ink-3">—</span>;
+    return <span className={`num text-ink-3 ${nullSizeClass}`}>—</span>;
   }
 
   const isPositive = numericBasis > 0;
@@ -51,15 +58,19 @@ export function GainBadge({
         : "text-ink-2";
 
   const sizeClasses =
-    size === "sm"
+    size === "lg"
       ? pill
-        ? "px-2 py-0.5 text-[12px]"
-        : "text-[12.5px]"
-      : pill
-        ? "px-2.5 py-0.5 text-[13px]"
-        : "text-[13.5px]";
+        ? "px-3 py-0.5 text-[14.5px] font-semibold"
+        : "text-[16px] font-semibold tracking-[-0.015em]"
+      : size === "sm"
+        ? pill
+          ? "px-2 py-0.5 text-[12px] font-medium"
+          : "text-[12.5px] font-medium"
+        : pill
+          ? "px-2.5 py-0.5 text-[13px] font-medium"
+          : "text-[13.5px] font-medium";
 
-  const iconSize = size === "sm" ? 13 : 14;
+  const iconSize = size === "lg" ? 15 : size === "sm" ? 13 : 14;
 
   const formattedAmount =
     amount !== null && amount !== undefined && amount !== ""
@@ -73,7 +84,7 @@ export function GainBadge({
 
   return (
     <span
-      className={`num inline-flex items-center gap-0.5 rounded-full font-medium ${toneClasses} ${sizeClasses}`}
+      className={`num inline-flex items-center gap-0.5 rounded-full ${toneClasses} ${sizeClasses}`}
     >
       {isPositive ? (
         <ArrowUpRight size={iconSize} strokeWidth={2.1} aria-hidden="true" />

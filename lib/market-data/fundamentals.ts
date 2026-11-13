@@ -42,7 +42,15 @@ export interface InstrumentFundamentals {
 }
 
 const FUNDAMENTALS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const fundamentalsCache = new TtlCache<InstrumentFundamentals>(250);
+const fundamentalsCache = new TtlCache<InstrumentFundamentals>(250, "fundamentals");
+
+export function getCachedInstrumentFundamentals(
+  rawSymbol: string,
+): InstrumentFundamentals | undefined {
+  const clean = rawSymbol.trim().toUpperCase();
+  if (!clean) return undefined;
+  return fundamentalsCache.get(clean);
+}
 
 interface YahooYearChartResponse {
   chart?: {

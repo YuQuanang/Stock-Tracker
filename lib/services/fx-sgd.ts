@@ -30,10 +30,23 @@ import {
   ZERO,
 } from "@/lib/finance";
 import { fetchUsdToSgdTimeSeries } from "@/lib/market-data/fx";
+import { TtlCache } from "@/lib/market-data/cache";
 import { evaluateInstrumentAcrossPortfolios } from "@/lib/services/symbol-ledgers";
 
 const BACKFILL_FAILURE_COOLDOWN_MS = 60 * 1000; // 60s cooldown if offline
+const FX_RANGE_SYNC_FRESHNESS_MS = 10 * 60 * 1000; // 10m cooldown after checking latest ECB FX
 let lastNetworkFailureAt = 0;
+
+interface FxSyncWindow {
+  minDate: string;
+  maxDate: string;
+}
+const fxRangeSyncCache = new TtlCache<FxSyncWindow>(20, "fx-range-sync");
+
+export function clearHistoricalFxSyncCache(): void {
+  fxRangeSyncCache.clear();
+  lastNetworkFailureAt = 0;
+}
 
 function daysBetweenIsoDates(earlier: string, later: string): number {
   const [y1, m1, d1] = earlier.split("-").map(Number);
@@ -65,6 +78,8 @@ export async function ensureHistoricalUsdSgdRates(params: {
   dates: readonly string[];
   database: Database;
   fetchImpl?: typeof fetch;
+  cacheOnly?: boolean;
+  forceSync?: boolean;
 }): Promise<EnsureHistoricalFxResult> {
   const validDates = [
     ...new Set(params.dates.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))),
@@ -115,12 +130,24 @@ export async function ensureHistoricalUsdSgdRates(params: {
     return resolved.rate === null;
   });
 
-  if (uncoveredDates.length === 0) {
+  if (uncoveredDates.length === 0 || params.cacheOnly) {
     return { fxBook, sourceByDate, fetchedCount: 0, fetchFailed: false };
   }
 
   const minUncovered = uncoveredDates[0];
   const maxUncovered = uncoveredDates[uncoveredDates.length - 1];
+
+  const syncedWindow =
+    !params.fetchImpl && !params.forceSync
+      ? fxRangeSyncCache.get("usd-sgd")
+      : undefined;
+  if (
+    syncedWindow &&
+    syncedWindow.minDate <= minUncovered &&
+    syncedWindow.maxDate >= maxUncovered
+  ) {
+    return { fxBook, sourceByDate, fetchedCount: 0, fetchFailed: false };
+  }
 
   try {
     const fetchedBars = await fetchUsdToSgdTimeSeries({
@@ -155,6 +182,23 @@ export async function ensureHistoricalUsdSgdRates(params: {
       }
     }
 
+    if (!params.fetchImpl) {
+      fxRangeSyncCache.set(
+        "usd-sgd",
+        {
+          minDate:
+            syncedWindow && syncedWindow.minDate < minUncovered
+              ? syncedWindow.minDate
+              : minUncovered,
+          maxDate:
+            syncedWindow && syncedWindow.maxDate > maxUncovered
+              ? syncedWindow.maxDate
+              : maxUncovered,
+        },
+        FX_RANGE_SYNC_FRESHNESS_MS,
+      );
+    }
+
     return {
       fxBook,
       sourceByDate,
@@ -162,6 +206,13 @@ export async function ensureHistoricalUsdSgdRates(params: {
       fetchFailed: false,
     };
   } catch {
+    if (!params.fetchImpl) {
+      fxRangeSyncCache.set(
+        "usd-sgd",
+        { minDate: minUncovered, maxDate: maxUncovered },
+        BACKFILL_FAILURE_COOLDOWN_MS,
+      );
+    }
     return {
       fxBook,
       sourceByDate,
@@ -359,40 +410,40 @@ export async function backfillMissingTransactionSgdTotals(
 ): Promise<{ updatedCount: number; fetchFailed: boolean }> {
   const database = options.db ?? (await getDb());
 
-  const incompleteRows = await database
-    .select({
-      id: transaction.id,
-      portfolioId: transaction.portfolioId,
-      instrumentId: transaction.instrumentId,
-      executedAt: transaction.executedAt,
-      originalOffset: transaction.originalOffset,
-      currency: transaction.currency,
-      fxRateToSgd: transaction.fxRateToSgd,
-      symbol: instrument.symbol,
-    })
-    .from(transaction)
-    .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
-    .where(
-      or(
-        isNull(transaction.totalCostSgd),
-        and(
-          eq(transaction.currency, "USD"),
-          isNull(transaction.fxRateToSgd),
+  // Check for incomplete SGD transactions and `Sell All` totals concurrently.
+  const [incompleteRows, sellAllRows] = await Promise.all([
+    database
+      .select({
+        id: transaction.id,
+        portfolioId: transaction.portfolioId,
+        instrumentId: transaction.instrumentId,
+        executedAt: transaction.executedAt,
+        originalOffset: transaction.originalOffset,
+        currency: transaction.currency,
+        fxRateToSgd: transaction.fxRateToSgd,
+        symbol: instrument.symbol,
+      })
+      .from(transaction)
+      .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
+      .where(
+        or(
+          isNull(transaction.totalCostSgd),
+          and(
+            eq(transaction.currency, "USD"),
+            isNull(transaction.fxRateToSgd),
+          ),
         ),
       ),
-    );
-
-  // `Sell All` totals depend on shares held across ALL portfolios, so they are
-  // always re-checked (cheap: writes happen only when a stored value changed).
-  const sellAllRows = await database
-    .select({
-      portfolioId: transaction.portfolioId,
-      instrumentId: transaction.instrumentId,
-      symbol: instrument.symbol,
-    })
-    .from(transaction)
-    .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
-    .where(eq(transaction.type, "Sell All"));
+    database
+      .select({
+        portfolioId: transaction.portfolioId,
+        instrumentId: transaction.instrumentId,
+        symbol: instrument.symbol,
+      })
+      .from(transaction)
+      .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
+      .where(eq(transaction.type, "Sell All")),
+  ]);
 
   if (incompleteRows.length === 0 && sellAllRows.length === 0) {
     return { updatedCount: 0, fetchFailed: false };

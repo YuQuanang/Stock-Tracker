@@ -12,16 +12,21 @@
  *  - Explicit `"stale_cache"` fallback from `price_bar` when offline (never
  *    silently inventing or disguising stale prices — Master Prompt Rule 5)
  */
-import { desc, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { type Database, getDb } from "@/db/client";
 import { instrument, type Instrument, priceBar } from "@/db/schema";
 import { toDecimal, toDecimalString, ZERO } from "@/lib/finance/decimal";
+import { MarketDataError } from "@/lib/market-data/errors";
 import { getSingaporeDateString } from "@/lib/market-data/hours";
-import { upsertDailyPriceBars } from "@/lib/market-data/history";
+import {
+  ensureInstrumentDailyBars,
+  upsertDailyPriceBars,
+} from "@/lib/market-data/history";
 import { type ProviderChain } from "@/lib/market-data/provider-chain";
 import {
   fetchStockPrice,
   formatShortMarketDate,
+  getCachedStockPrice,
   type PriceMarketStatus,
 } from "@/lib/market-data/quotes";
 import { inferInstrumentMetadata } from "@/lib/symbols";
@@ -49,6 +54,8 @@ export interface ResolvedInstrumentQuote {
   status: ResolvedQuoteStatus;
   freshnessLabel: string;
   unavailableReason?: string;
+  /** True when external market-data providers reported no listing (`not_found`). */
+  priceNotFound?: boolean;
   asOf: string | null;
   effectiveDate: string | null;
   source: string | null;
@@ -63,6 +70,10 @@ export interface ResolveBatchQuotesOptions {
   fetchImpl?: typeof fetch;
   chain?: ProviderChain;
   skipCache?: boolean;
+  /** Re-check symbols previously marked as `priceNotFoundAt` in DB. */
+  retryNotFound?: boolean;
+  /** Resolve from shared memory/DB caches only without external provider HTTP calls. */
+  cacheOnly?: boolean;
   includeSparklines?: boolean;
   concurrency?: number;
 }
@@ -86,6 +97,35 @@ async function runWithConcurrency<T, R>(
   const workerCount = Math.min(Math.max(1, limit), items.length);
   await Promise.all(Array.from({ length: workerCount }, () => consume()));
   return results;
+}
+
+function subtractCalendarDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const utc = Date.UTC(y, m - 1, d) - days * 86_400_000;
+  return new Date(utc).toISOString().slice(0, 10);
+}
+
+function buildSparklineCloses(params: {
+  barsAsc: readonly { date: string; close: string }[];
+  latestDate: string;
+  latestPrice: string;
+  fallbackPrevClose: string | null;
+}): string[] {
+  const normalizedBars = params.barsAsc.filter(
+    (b) => b.date < params.latestDate,
+  );
+  const closes = normalizedBars
+    .slice(-19)
+    .map((b) => toDecimalString(toDecimal(b.close), 6));
+
+  if (closes.length === 0 && params.fallbackPrevClose) {
+    return [
+      toDecimalString(toDecimal(params.fallbackPrevClose), 6),
+      params.latestPrice,
+    ];
+  }
+
+  return [...closes, params.latestPrice];
 }
 
 function computeDayChanges(
@@ -163,13 +203,15 @@ export async function resolveQuotesForSymbols(
     }
   }
 
-  const concurrency = options.concurrency ?? 6;
+  const concurrency = options.concurrency ?? 10;
   const barsToPersist: {
     instrumentId: string;
     date: string;
     close: string;
     source: string;
   }[] = [];
+  const notFoundToPersist: { instrumentId: string; reason: string }[] = [];
+  const notFoundToClearIds: string[] = [];
 
   const resolvedList = await runWithConcurrency(
     uniqueSymbols,
@@ -264,27 +306,192 @@ export async function resolveQuotesForSymbols(
         };
       }
 
-      // 4. Live / Last-close provider lookup
-      try {
-        const quote = await fetchStockPrice(symbol, {
-          now,
-          fetchImpl: options.fetchImpl,
-          chain: options.chain,
-          skipCache: options.skipCache,
-        });
+      // 3.5. Persistently known not-found symbols (unless explicit Retry / skipCache)
+      const hasPersistedNotFound =
+        dbInstr?.priceNotFoundAt !== null && dbInstr?.priceNotFoundAt !== undefined;
+      if (hasPersistedNotFound && !options.skipCache && !options.retryNotFound) {
+        const latestCached = recentDesc[0];
+        if (latestCached) {
+          const cachedPrice = toDecimalString(toDecimal(latestCached.close), 6);
+          const priorCached = recentDesc[1]
+            ? toDecimalString(toDecimal(recentDesc[1].close), 6)
+            : null;
+          const changes = computeDayChanges(cachedPrice, priorCached);
+          return {
+            symbol,
+            name: dbInstr?.name ?? null,
+            currency: inferred.currency,
+            exchangeCode: inferred.exchangeCode,
+            assetType: inferred.assetType,
+            price: cachedPrice,
+            previousClose: priorCached,
+            dayChange: changes.dayChange,
+            dayChangePercent: changes.dayChangePercent,
+            status: "stale_cache",
+            priceNotFound: true,
+            freshnessLabel: `Cached close, ${formatShortMarketDate(
+              latestCached.date,
+              referenceYear,
+            )}`,
+            unavailableReason:
+              dbInstr?.priceNotFoundReason ??
+              `Ticker ${symbol} was not found on market providers.`,
+            asOf: `${latestCached.date}T16:00:00.000Z`,
+            effectiveDate: latestCached.date,
+            source: latestCached.source,
+            sparklineCloses,
+          };
+        }
 
-        // Fall back to second-newest DB close if provider omitted `previousClose`
+        return {
+          symbol,
+          name: dbInstr?.name ?? null,
+          currency: inferred.currency,
+          exchangeCode: inferred.exchangeCode,
+          assetType: inferred.assetType,
+          price: null,
+          previousClose: null,
+          dayChange: null,
+          dayChangePercent: null,
+          status: "unavailable",
+          priceNotFound: true,
+          freshnessLabel: "Price not found",
+          unavailableReason:
+            dbInstr?.priceNotFoundReason ??
+            `No market price found for ${symbol}. Automatic lookups are paused.`,
+          asOf: null,
+          effectiveDate: null,
+          source: null,
+          sparklineCloses,
+        };
+      }
+
+      // 4. Live / Cached / Last-close provider lookup (+ auto-seed 1M sparkline history)
+      const cachedMemQuote =
+        options.skipCache || options.retryNotFound
+          ? undefined
+          : getCachedStockPrice(symbol);
+
+      if (options.cacheOnly && !cachedMemQuote) {
+        if (recentDesc.length > 0) {
+          const latestCached = recentDesc[0];
+          const cachedPrice = toDecimalString(toDecimal(latestCached.close), 6);
+          const priorCached = recentDesc[1]
+            ? toDecimalString(toDecimal(recentDesc[1].close), 6)
+            : null;
+          const changes = computeDayChanges(cachedPrice, priorCached);
+          return {
+            symbol,
+            name: dbInstr?.name ?? null,
+            currency: inferred.currency,
+            exchangeCode: inferred.exchangeCode,
+            assetType: inferred.assetType,
+            price: cachedPrice,
+            previousClose: priorCached,
+            dayChange: changes.dayChange,
+            dayChangePercent: changes.dayChangePercent,
+            status: "last_close",
+            freshnessLabel: `Cached close, ${formatShortMarketDate(
+              latestCached.date,
+              referenceYear,
+            )}`,
+            asOf: `${latestCached.date}T16:00:00.000Z`,
+            effectiveDate: latestCached.date,
+            source: latestCached.source,
+            sparklineCloses,
+          };
+        }
+
+        return {
+          symbol,
+          name: dbInstr?.name ?? null,
+          currency: inferred.currency,
+          exchangeCode: inferred.exchangeCode,
+          assetType: inferred.assetType,
+          price: null,
+          previousClose: null,
+          dayChange: null,
+          dayChangePercent: null,
+          status: "unavailable",
+          priceNotFound: hasPersistedNotFound || undefined,
+          freshnessLabel: hasPersistedNotFound
+            ? "Price not found"
+            : "Price unavailable",
+          unavailableReason: `No cached price stored for ${symbol}.`,
+          asOf: null,
+          effectiveDate: null,
+          source: null,
+          sparklineCloses,
+        };
+      }
+
+      const shouldSeedSparklineBars =
+        !options.cacheOnly &&
+        options.includeSparklines === true &&
+        recentDesc.length < 5;
+      const todayIso = getSingaporeDateString(now);
+
+      try {
+        const [quote, seededHistory] = await Promise.all([
+          cachedMemQuote
+            ? Promise.resolve(cachedMemQuote)
+            : fetchStockPrice(symbol, {
+                now,
+                fetchImpl: options.fetchImpl,
+                chain: options.chain,
+                skipCache: options.skipCache || options.retryNotFound,
+              }),
+          shouldSeedSparklineBars
+            ? ensureInstrumentDailyBars({
+                symbol,
+                startDate: subtractCalendarDays(todayIso, 35),
+                endDate: todayIso,
+                forceRefresh: options.retryNotFound,
+                db: database,
+                now,
+                fetchImpl: options.fetchImpl,
+                chain: options.chain,
+              }).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+
+        if (dbInstr && hasPersistedNotFound) {
+          notFoundToClearIds.push(dbInstr.id);
+        }
+
+        const effectiveHistoryAsc =
+          seededHistory && seededHistory.bars.length > 0
+            ? seededHistory.bars.map((bar) => ({
+                date: bar.date,
+                close: bar.close,
+              }))
+            : [...recentDesc].reverse().map((bar) => ({
+                date: bar.date,
+                close: bar.close,
+              }));
+
+        const barsBeforeQuote = effectiveHistoryAsc.filter(
+          (bar) => bar.date < quote.effectiveDate,
+        );
+        const latestPriorBar =
+          barsBeforeQuote.length > 0
+            ? barsBeforeQuote[barsBeforeQuote.length - 1]
+            : null;
+
+        // Fall back to prior daily bar close if provider omitted `previousClose`
         const fallbackPrevClose =
           quote.previousClose ??
-          (recentDesc.length >= 2 && recentDesc[0]?.date === quote.effectiveDate
-            ? toDecimalString(toDecimal(recentDesc[1].close), 6)
-            : recentDesc.length >= 1 && recentDesc[0]?.date < quote.effectiveDate
-              ? toDecimalString(toDecimal(recentDesc[0].close), 6)
-              : null);
+          (latestPriorBar
+            ? toDecimalString(toDecimal(latestPriorBar.close), 6)
+            : null);
 
         const changes = computeDayChanges(quote.price, fallbackPrevClose);
 
-        if (dbInstr && /^\d{4}-\d{2}-\d{2}$/.test(quote.effectiveDate)) {
+        if (
+          dbInstr &&
+          !seededHistory &&
+          /^\d{4}-\d{2}-\d{2}$/.test(quote.effectiveDate)
+        ) {
           barsToPersist.push({
             instrumentId: dbInstr.id,
             date: quote.effectiveDate,
@@ -293,12 +500,14 @@ export async function resolveQuotesForSymbols(
           });
         }
 
-        const updatedSparkline =
-          sparklineCloses !== undefined
-            ? sparklineCloses.length > 0
-              ? [...sparklineCloses.slice(0, -1), quote.price]
-              : [quote.price]
-            : undefined;
+        const updatedSparkline = options.includeSparklines
+          ? buildSparklineCloses({
+              barsAsc: effectiveHistoryAsc,
+              latestDate: quote.effectiveDate,
+              latestPrice: quote.price,
+              fallbackPrevClose,
+            })
+          : undefined;
 
         return {
           symbol,
@@ -318,6 +527,15 @@ export async function resolveQuotesForSymbols(
           sparklineCloses: updatedSparkline,
         };
       } catch (error) {
+        const isNotFound =
+          error instanceof MarketDataError && error.kind === "not_found";
+        if (dbInstr && isNotFound) {
+          notFoundToPersist.push({
+            instrumentId: dbInstr.id,
+            reason: error.message,
+          });
+        }
+
         // 5. Honest stale-cache fallback if we have a real stored `price_bar`
         const latestCached = recentDesc[0];
         if (latestCached) {
@@ -338,6 +556,7 @@ export async function resolveQuotesForSymbols(
             dayChange: changes.dayChange,
             dayChangePercent: changes.dayChangePercent,
             status: "stale_cache",
+            priceNotFound: isNotFound || undefined,
             freshnessLabel: `Cached close, ${formatShortMarketDate(
               latestCached.date,
               referenceYear,
@@ -360,7 +579,8 @@ export async function resolveQuotesForSymbols(
           dayChange: null,
           dayChangePercent: null,
           status: "unavailable",
-          freshnessLabel: "Price unavailable",
+          priceNotFound: isNotFound || undefined,
+          freshnessLabel: isNotFound ? "Price not found" : "Price unavailable",
           unavailableReason:
             error instanceof Error
               ? error.message
@@ -394,6 +614,36 @@ export async function resolveQuotesForSymbols(
       );
     } catch {
       // Non-fatal: never fail a quote response due to cache persistence
+    }
+  }
+
+  // Persist or clear `price_not_found_at` flags cleanly so unknown tickers do
+  // not repeatedly stall future page loads or polls.
+  for (const item of notFoundToPersist) {
+    try {
+      await database
+        .update(instrument)
+        .set({
+          priceNotFoundAt: now,
+          priceNotFoundReason: item.reason,
+        })
+        .where(eq(instrument.id, item.instrumentId));
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  if (notFoundToClearIds.length > 0) {
+    try {
+      await database
+        .update(instrument)
+        .set({
+          priceNotFoundAt: null,
+          priceNotFoundReason: null,
+        })
+        .where(inArray(instrument.id, notFoundToClearIds));
+    } catch {
+      // Non-fatal
     }
   }
 

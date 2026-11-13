@@ -49,9 +49,19 @@ export interface StockPriceQuote {
   source: string;
 }
 
-const LATEST_QUOTE_TTL_MS = 10 * 1000; // 10 seconds
+const LATEST_QUOTE_OPEN_TTL_MS = 30 * 1000; // 30 seconds while session open
+const LATEST_QUOTE_CLOSED_TTL_MS = 5 * 60 * 1000; // 5 minutes when session closed
 const HISTORICAL_QUOTE_TTL_MS = 60 * 60 * 1000; // 1 hour
-const quoteCache = new TtlCache<StockPriceQuote>(400);
+const NOT_FOUND_QUOTE_TTL_MS = 15 * 60 * 1000; // 15 minutes cooldown for unlisted tickers
+const STOOQ_TIMEOUT_MS = 5000;
+const quoteCache = new TtlCache<StockPriceQuote>(400, "quotes");
+const notFoundQuoteCache = new TtlCache<string>(200, "quotes-not-found");
+
+export function getCachedStockPrice(rawSymbol: string): StockPriceQuote | undefined {
+  const symbol = rawSymbol.trim().toUpperCase();
+  if (!symbol) return undefined;
+  return quoteCache.get(`${symbol}|latest`);
+}
 
 interface YahooChartResponse {
   chart?: {
@@ -432,19 +442,27 @@ async function fetchViaStooqCsv(
 
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqTicker)}&i=d`;
   const fetchFn = fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), STOOQ_TIMEOUT_MS);
 
   let response: Response;
   try {
     response = await fetchFn(url, {
       headers: { "User-Agent": BROWSER_USER_AGENT },
+      signal: controller.signal,
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
     throw new MarketDataError(
       "network",
       "Stooq",
-      "Could not reach fallback price provider.",
+      isAbort
+        ? "Fallback price provider timed out."
+        : "Could not reach fallback price provider.",
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
@@ -540,7 +558,14 @@ export async function fetchStockPrice(
   const isBackdated = requestedDate !== null && requestedDate < todaySgt;
 
   const cacheKey = `${symbol.toUpperCase()}|${isBackdated ? requestedDate : "latest"}`;
-  const ttl = isBackdated ? HISTORICAL_QUOTE_TTL_MS : LATEST_QUOTE_TTL_MS;
+  const session = isBackdated
+    ? null
+    : getMarketSessionStatus(inferMarketRegion(symbol), now);
+  const ttl = isBackdated
+    ? HISTORICAL_QUOTE_TTL_MS
+    : session?.isOpen
+      ? LATEST_QUOTE_OPEN_TTL_MS
+      : LATEST_QUOTE_CLOSED_TTL_MS;
   const activeChain = options.chain ?? globalProviderChain;
 
   const execute = async (): Promise<StockPriceQuote> => {
@@ -600,12 +625,41 @@ export async function fetchStockPrice(
     return resolved.value;
   };
 
+  if (!options.skipCache && !options.fetchImpl) {
+    const negReason = notFoundQuoteCache.get(cacheKey, nowMs);
+    if (negReason) {
+      throw new MarketDataError("not_found", "Cache", negReason);
+    }
+  }
+
+  const runFetch = async (): Promise<StockPriceQuote> => {
+    try {
+      return await execute();
+    } catch (error) {
+      if (
+        !options.skipCache &&
+        !options.fetchImpl &&
+        error instanceof MarketDataError &&
+        error.kind === "not_found"
+      ) {
+        notFoundQuoteCache.set(
+          cacheKey,
+          error.message,
+          NOT_FOUND_QUOTE_TTL_MS,
+          nowMs,
+        );
+      }
+      throw error;
+    }
+  };
+
   return options.skipCache
-    ? execute()
-    : quoteCache.getOrFetch(cacheKey, ttl, execute);
+    ? runFetch()
+    : quoteCache.getOrFetch(cacheKey, ttl, runFetch);
 }
 
 export function clearQuoteCache(): void {
   quoteCache.clear();
+  notFoundQuoteCache.clear();
   globalProviderChain.reset();
 }

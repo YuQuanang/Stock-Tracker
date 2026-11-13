@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useMemo, useState } from "react";
-import { motion } from "framer-motion";
 import {
   ArrowLeft,
   Pencil,
@@ -40,13 +39,15 @@ import {
   buildValuedHoldings,
   type SerializedOpenLot,
 } from "@/lib/holdings/valuation";
-import { springSmooth } from "@/lib/motion";
 import type { StockDetailSnapshot } from "@/lib/services/holdings";
 import type {
   EnrichedTransactionRow,
   LedgerPositionSummary,
 } from "@/lib/services/ledger";
-import { formatExchangeCodeForDisplay } from "@/lib/transactions/form-logic";
+import {
+  formatExchangeCodeForDisplay,
+  formatSymbolForDisplay,
+} from "@/lib/transactions/form-logic";
 
 type DetailLedgerTab = "lots" | "closed" | "transactions";
 
@@ -136,14 +137,20 @@ export function StockDetailView({
     [initialQuote, instrument.symbol],
   );
 
-  const { quotes, fxUsdToSgd, isRefreshing, refreshNow } = useQuotesPoll({
-    symbols: [instrument.symbol],
-    includeSparklines: true,
-    enabled: true,
-    initialQuotes: initialQuotesMap,
-    initialFxUsdToSgd,
-    initialMarket,
-  });
+  const { quotes, fxUsdToSgd, isRefreshing, isRetrying, refreshNow, retrySymbols } =
+    useQuotesPoll({
+      symbols: [instrument.symbol],
+      includeSparklines: true,
+      enabled:
+        instrument.assetType !== "crypto" &&
+        !instrument.isDelisted &&
+        !instrument.priceNotFound &&
+        !initialQuote?.priceNotFound &&
+        initialQuote?.status !== "unavailable",
+      initialQuotes: initialQuotesMap,
+      initialFxUsdToSgd,
+      initialMarket,
+    });
 
   const liveQuote = quotes[instrument.symbol] ?? initialQuote;
 
@@ -432,8 +439,8 @@ export function StockDetailView({
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="secondary"
+            size="sm"
             onClick={openOverrideSheet}
-            className="h-9.5 px-3.5 text-[13.5px]"
           >
             <SlidersHorizontal size={14} strokeWidth={2} aria-hidden="true" />
             <span>
@@ -443,22 +450,43 @@ export function StockDetailView({
 
           <Button
             variant="secondary"
-            onClick={() => void refreshNow()}
-            disabled={isRefreshing}
-            className="h-9.5 px-3.5 text-[13.5px]"
+            size="sm"
+            onClick={() => {
+              if (
+                instrument.priceNotFound ||
+                liveQuote?.priceNotFound ||
+                liveQuote?.status === "unavailable"
+              ) {
+                void retrySymbols([instrument.symbol]).then((res) => {
+                  const updated = res?.[instrument.symbol];
+                  if (updated && updated.price !== null) {
+                    router.refresh();
+                  }
+                });
+              } else {
+                void refreshNow();
+              }
+            }}
+            disabled={isRefreshing || isRetrying}
           >
             <RefreshCw
               size={14}
               strokeWidth={2}
               aria-hidden="true"
-              className={isRefreshing ? "animate-spin" : undefined}
+              className={isRefreshing || isRetrying ? "animate-spin" : undefined}
             />
-            <span>{isRefreshing ? "Refreshing…" : "Refresh"}</span>
+            <span>
+              {isRefreshing || isRetrying
+                ? "Checking…"
+                : instrument.priceNotFound || liveQuote?.priceNotFound
+                  ? "Retry lookup"
+                  : "Refresh"}
+            </span>
           </Button>
 
           <Button
+            size="sm"
             onClick={openNewTradeSheet}
-            className="h-9.5 px-4 text-[13.5px]"
           >
             <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
             <span>Record trade</span>
@@ -471,13 +499,9 @@ export function StockDetailView({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <motion.h1
-                layoutId={`holding-symbol-${instrument.symbol}`}
-                transition={springSmooth}
-                className="font-mono text-[28px] font-bold tracking-tight text-ink sm:text-[32px]"
-              >
-                {instrument.symbol}
-              </motion.h1>
+              <h1 className="font-mono text-[28px] font-bold tracking-tight text-ink sm:text-[32px]">
+                {formatSymbolForDisplay(instrument.symbol)}
+              </h1>
 
               {exchangeDisplay && (
                 <span className="rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11.5px] font-medium text-ink-2">
@@ -533,10 +557,13 @@ export function StockDetailView({
             ) : (
               <div>
                 <p className="text-[20px] font-semibold text-ink-2">
-                  Price unavailable
+                  {instrument.priceNotFound || liveQuote?.priceNotFound
+                    ? "Price not found"
+                    : "Price unavailable"}
                 </p>
                 <p className="mt-1 text-[12.5px] text-ink-3">
                   {liveQuote?.unavailableReason ??
+                    instrument.priceNotFoundReason ??
                     "No market quote available. Use Price override to value manually."}
                 </p>
               </div>

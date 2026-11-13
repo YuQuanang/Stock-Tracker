@@ -444,7 +444,7 @@ export function TransactionsView({
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search symbol or note…"
                 aria-label="Filter transactions"
-                className="field-input h-9.5 bg-surface pl-8.5 pr-3 text-[14px]"
+                className="field-input h-9.5 bg-surface pl-9.5 pr-3 text-[14px]"
               />
             </div>
           </div>

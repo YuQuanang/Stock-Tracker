@@ -86,9 +86,9 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next.js internals and public static files.
+  // Everything except Next.js internals, public static files, and PWA endpoints.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|robots.txt).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|apple-icon|icon/|icons/|robots.txt).*)",
   ],
 };
 

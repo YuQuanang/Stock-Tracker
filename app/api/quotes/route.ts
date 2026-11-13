@@ -18,6 +18,10 @@ const querySchema = z.object({
     .enum(["0", "1", "true", "false"])
     .optional()
     .transform((v) => v === "1" || v === "true"),
+  retryNotFound: z
+    .enum(["0", "1", "true", "false"])
+    .optional()
+    .transform((v) => v === "1" || v === "true"),
 });
 
 const MAX_BATCH_SYMBOLS = 100;
@@ -32,6 +36,7 @@ export async function GET(request: NextRequest) {
     symbols: request.nextUrl.searchParams.get("symbols") ?? undefined,
     scope: request.nextUrl.searchParams.get("scope") ?? "explicit",
     sparklines: request.nextUrl.searchParams.get("sparklines") ?? undefined,
+    retryNotFound: request.nextUrl.searchParams.get("retryNotFound") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -76,6 +81,8 @@ export async function GET(request: NextRequest) {
       db: database,
       now,
       includeSparklines: parsed.data.sparklines,
+      skipCache: parsed.data.retryNotFound,
+      retryNotFound: parsed.data.retryNotFound,
     }),
     fetchExchangeRateToSgd({ from: "USD", now }).catch(
       (): ExchangeRateSnapshot | null => null,

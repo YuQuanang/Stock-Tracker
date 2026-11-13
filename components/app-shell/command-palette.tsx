@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CornerDownLeft, Search } from "lucide-react";
 import { NAV_ITEMS } from "@/components/app-shell/nav-items";
-import { fadeQuick, springSmooth } from "@/lib/motion";
+import { fadeQuick, springSnappy } from "@/lib/motion";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -33,11 +33,17 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     });
   }, [query]);
 
-  // Focus the input when opening.
+  // Focus the input and lock background scroll when opening.
   useEffect(() => {
-    if (isOpen) {
-      inputRef.current?.focus();
+    if (!isOpen) {
+      return;
     }
+    inputRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [isOpen]);
 
   function close(): void {
@@ -58,6 +64,12 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setHighlightedIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setHighlightedIndex(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setHighlightedIndex(Math.max(matches.length - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
       const chosen = matches[highlightedIndex];
@@ -86,10 +98,10 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             aria-modal="true"
             aria-label="Command palette"
             className="material w-full max-w-lg overflow-hidden rounded-[var(--radius-card)] border border-line shadow-raised"
-            initial={{ opacity: 0, y: -12, scale: 0.98 }}
+            initial={{ opacity: 0, y: -8, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={springSmooth}
+            exit={{ opacity: 0, y: -6, scale: 0.985 }}
+            transition={springSnappy}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center gap-3 border-b border-line px-4">
@@ -106,7 +118,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                 role="combobox"
                 aria-expanded="true"
                 aria-controls="command-palette-list"
-                aria-activedescendant={`command-option-${highlightedIndex}`}
+                aria-activedescendant={
+                  matches[highlightedIndex] ? `command-option-${highlightedIndex}` : undefined
+                }
                 className="h-14 flex-1 bg-transparent text-[17px] outline-none placeholder:text-ink-3"
               />
             </div>

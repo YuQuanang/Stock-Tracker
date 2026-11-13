@@ -1,0 +1,1397 @@
+"use client";
+
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  AlertTriangle,
+  ArrowRight,
+  ChartLine,
+  CheckCircle2,
+  ChevronDown,
+  Coins,
+  FileUp,
+  Info,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
+import { MetricTooltip } from "@/components/analytics/metric-tooltip";
+import { AllocationDonut } from "@/components/charts/allocation-donut";
+import { PortfolioValueChart } from "@/components/charts/portfolio-value-chart";
+import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { GainBadge } from "@/components/ui/gain-badge";
+import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
+import { useQuotesPoll } from "@/hooks/use-quotes-poll";
+import {
+  CORE_COMPARISON_BENCHMARKS,
+  computeReturnSpread,
+} from "@/lib/benchmarks/summary";
+import { formatMoney, formatPercent } from "@/lib/format";
+import { fadeQuick, springSmooth } from "@/lib/motion";
+import { formatSymbolForDisplay } from "@/lib/transactions/form-logic";
+import type {
+  MoverViewRow,
+  PortfolioAnalyticsSnapshot,
+} from "@/lib/services/analytics";
+
+interface DashboardViewProps {
+  initialSnapshot: PortfolioAnalyticsSnapshot;
+  hydrateLiveOnMount?: boolean;
+}
+
+const DEFAULT_MOVER_PREVIEW_COUNT = 2;
+
+const CURRENCY_OPTIONS: readonly SegmentedOption<"SGD" | "USD">[] = [
+  { value: "SGD", label: "SGD" },
+  { value: "USD", label: "USD" },
+];
+
+function MoverItemRow({
+  row,
+  mode,
+  currency,
+}: {
+  row: MoverViewRow;
+  mode: "today" | "all-time";
+  currency: "SGD" | "USD";
+}) {
+  const pct =
+    mode === "today" ? row.dayChangePercent : row.unrealizedPnlPercent;
+  const amt =
+    mode === "today" ? row.dayChangeInBase : row.unrealizedPnlInBase;
+
+  return (
+    <Link
+      href={`/holdings/${encodeURIComponent(row.symbol)}`}
+      className="flex items-center justify-between gap-3 rounded-[8px] px-1.5 py-2 -mx-1.5 text-[13px] transition-colors hover:bg-surface-2/50"
+    >
+      <div className="min-w-0">
+        <p className="truncate font-semibold text-ink">{row.displaySymbol}</p>
+        <p className="truncate text-[11.5px] text-ink-3">
+          {row.name ?? row.symbol}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <GainBadge
+          amount={amt}
+          currency={currency}
+          percent={pct}
+          size="sm"
+        />
+      </div>
+    </Link>
+  );
+}
+
+function MoverListSection({
+  title,
+  emptyLabel,
+  rows,
+  mode,
+  currency,
+  isExpanded,
+}: {
+  title: string;
+  emptyLabel: string;
+  rows: readonly MoverViewRow[];
+  mode: "today" | "all-time";
+  currency: "SGD" | "USD";
+  isExpanded: boolean;
+}) {
+  const previewRows = rows.slice(0, DEFAULT_MOVER_PREVIEW_COUNT);
+  const extraRows = rows.slice(DEFAULT_MOVER_PREVIEW_COUNT);
+
+  return (
+    <div>
+      <p className="text-[11.5px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+        {title}
+      </p>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-[13px] text-ink-3">{emptyLabel}</p>
+      ) : (
+        <div className="mt-2">
+          <ul className="divide-y divide-line/60">
+            {previewRows.map((row) => (
+              <li key={row.symbol}>
+                <MoverItemRow row={row} mode={mode} currency={currency} />
+              </li>
+            ))}
+          </ul>
+
+          <AnimatePresence initial={false}>
+            {isExpanded && extraRows.length > 0 && (
+              <motion.ul
+                initial={{ opacity: 0, height: 0 }}
+                animate={{
+                  opacity: 1,
+                  height: "auto",
+                  transition: { ...springSmooth, opacity: fadeQuick },
+                }}
+                exit={{
+                  opacity: 0,
+                  height: 0,
+                  transition: { ...fadeQuick, opacity: { duration: 0.1 } },
+                }}
+                className="divide-y divide-line/60 overflow-hidden border-t border-line/60"
+              >
+                {extraRows.map((row) => (
+                  <li key={row.symbol}>
+                    <MoverItemRow row={row} mode={mode} currency={currency} />
+                  </li>
+                ))}
+              </motion.ul>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoverSummaryCard({
+  title,
+  headerRight,
+  primaryTitle,
+  primaryEmpty,
+  primaryRows,
+  secondaryTitle,
+  secondaryEmpty,
+  secondaryRows,
+  mode,
+  currency,
+}: {
+  title: string;
+  headerRight: ReactNode;
+  primaryTitle: string;
+  primaryEmpty: string;
+  primaryRows: readonly MoverViewRow[];
+  secondaryTitle: string;
+  secondaryEmpty: string;
+  secondaryRows: readonly MoverViewRow[];
+  mode: "today" | "all-time";
+  currency: "SGD" | "USD";
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const hiddenCount =
+    Math.max(0, primaryRows.length - DEFAULT_MOVER_PREVIEW_COUNT) +
+    Math.max(0, secondaryRows.length - DEFAULT_MOVER_PREVIEW_COUNT);
+
+  return (
+    <Card className="space-y-4 p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-[16px] font-semibold tracking-[-0.015em] text-ink">
+          {title}
+        </h2>
+        {headerRight}
+      </div>
+
+      <MoverListSection
+        title={primaryTitle}
+        emptyLabel={primaryEmpty}
+        rows={primaryRows}
+        mode={mode}
+        currency={currency}
+        isExpanded={isExpanded}
+      />
+
+      <MoverListSection
+        title={secondaryTitle}
+        emptyLabel={secondaryEmpty}
+        rows={secondaryRows}
+        mode={mode}
+        currency={currency}
+        isExpanded={isExpanded}
+      />
+
+      {hiddenCount > 0 && (
+        <div className="border-t border-line/60 pt-2.5">
+          <button
+            type="button"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            aria-expanded={isExpanded}
+            className="flex w-full items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-[12.5px] font-medium text-accent transition-colors hover:bg-surface-2/60 focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <span>
+              {isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}
+            </span>
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={`transition-transform duration-200 ${
+                isExpanded ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Interactive Portfolio Overview Dashboard (`components/dashboard/dashboard-view.tsx`).
+ */
+export function DashboardView({
+  initialSnapshot,
+  hydrateLiveOnMount = false,
+}: DashboardViewProps) {
+  const [snapshot, setSnapshot] =
+    useState<PortfolioAnalyticsSnapshot>(initialSnapshot);
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(
+    initialSnapshot.scope.portfolioFilterId,
+  );
+  const [selectedCurrency, setSelectedCurrency] = useState<"SGD" | "USD">(
+    initialSnapshot.scope.currency,
+  );
+  const [isLoadingScope, setIsLoadingScope] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const [isQualityExpanded, setIsQualityExpanded] = useState(false);
+  const [isAllocationExpanded, setIsAllocationExpanded] = useState(false);
+  const requestSeqRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const didHydrateLiveRef = useRef(false);
+  const snapshotCacheRef = useRef<Map<string, PortfolioAnalyticsSnapshot>>(
+    new Map(),
+  );
+
+  useEffect(() => {
+    const key = `${initialSnapshot.scope.portfolioFilterId}::${initialSnapshot.scope.currency}`;
+    snapshotCacheRef.current.set(key, initialSnapshot);
+  }, [initialSnapshot]);
+
+  useEffect(() => {
+    if (
+      !hydrateLiveOnMount ||
+      didHydrateLiveRef.current ||
+      initialSnapshot.accountHasNoTransactions
+    ) {
+      return;
+    }
+
+    const seq = ++requestSeqRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const qs = new URLSearchParams({
+      portfolioId: initialSnapshot.scope.portfolioFilterId,
+      currency: initialSnapshot.scope.currency,
+      benchmarks: CORE_COMPARISON_BENCHMARKS.map((b) => b.symbol).join(","),
+      includeBenchmarks: "true",
+      includeFundamentals: "true",
+    });
+
+    void fetch(`/api/analytics?${qs.toString()}`, {
+      signal: controller.signal,
+    })
+      .then((res) =>
+        res.ok ? (res.json() as Promise<PortfolioAnalyticsSnapshot>) : null,
+      )
+      .then((fresh) => {
+        if (!fresh || seq !== requestSeqRef.current) {
+          return;
+        }
+        didHydrateLiveRef.current = true;
+        snapshotCacheRef.current.set(
+          `${fresh.scope.portfolioFilterId}::${fresh.scope.currency}`,
+          fresh,
+        );
+        setSnapshot(fresh);
+      })
+      .catch(() => {
+        // Keep the instant DB-cached SSR snapshot if offline or aborted.
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    hydrateLiveOnMount,
+    initialSnapshot.accountHasNoTransactions,
+    initialSnapshot.scope.portfolioFilterId,
+    initialSnapshot.scope.currency,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const openNonCryptoSymbols = snapshot.holdings
+    .filter(
+      (h) =>
+        h.isOpenPosition &&
+        h.assetType !== "crypto" &&
+        !h.isDelisted &&
+        !h.priceNotFound &&
+        !snapshot.quotes[h.symbol]?.priceNotFound,
+    )
+    .map((h) => h.symbol);
+
+  const unpricedOpenHoldings = snapshot.holdings
+    .filter((h) => h.isOpenPosition && h.unitPrice === null)
+    .sort((a, b) => {
+      const aCrypto = a.assetType === "crypto" ? 1 : 0;
+      const bCrypto = b.assetType === "crypto" ? 1 : 0;
+      if (aCrypto !== bCrypto) {
+        return aCrypto - bCrypto;
+      }
+      return a.symbol.localeCompare(b.symbol);
+    });
+  const retryableNotFoundSymbols = unpricedOpenHoldings
+    .filter((h) => h.assetType !== "crypto" && !h.isDelisted)
+    .map((h) => h.symbol);
+
+  const livePoll = useQuotesPoll({
+    symbols: openNonCryptoSymbols,
+    enabled: !snapshot.accountHasNoTransactions && openNonCryptoSymbols.length > 0,
+    skipInitialFetch: hydrateLiveOnMount,
+    initialQuotes: snapshot.quotes,
+    initialFxUsdToSgd: snapshot.fxUsdToSgd,
+    initialMarket: snapshot.market,
+  });
+
+  async function loadAnalyticsScope(next: {
+    portfolioId: string;
+    currency: "SGD" | "USD";
+    forceRefresh?: boolean;
+  }) {
+    const cacheKey = `${next.portfolioId}::${next.currency}`;
+    if (next.forceRefresh) {
+      snapshotCacheRef.current.clear();
+    } else {
+      snapshotCacheRef.current.set(
+        `${snapshot.scope.portfolioFilterId}::${snapshot.scope.currency}`,
+        snapshot,
+      );
+      const cached = snapshotCacheRef.current.get(cacheKey);
+      if (cached) {
+        abortRef.current?.abort();
+        requestSeqRef.current += 1;
+        setSnapshot(cached);
+        setSelectedPortfolioId(cached.scope.portfolioFilterId);
+        setSelectedCurrency(cached.scope.currency);
+        setIsLoadingScope(false);
+        setScopeError(null);
+        return;
+      }
+    }
+
+    const seq = ++requestSeqRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Optimistically move controls in 0ms while fresh scoped analytics load.
+    setSelectedPortfolioId(next.portfolioId);
+    setSelectedCurrency(next.currency);
+    setIsLoadingScope(true);
+    setScopeError(null);
+    try {
+      const qs = new URLSearchParams({
+        portfolioId: next.portfolioId,
+        currency: next.currency,
+        benchmarks: CORE_COMPARISON_BENCHMARKS.map((b) => b.symbol).join(","),
+        includeBenchmarks: "true",
+        includeFundamentals: "true",
+      });
+      if (next.forceRefresh) {
+        qs.set("forceRefresh", "true");
+      } else {
+        // Scope & currency toggles reuse warm server/DB caches in milliseconds.
+        qs.set("cacheOnly", "true");
+      }
+      const res = await fetch(`/api/analytics?${qs.toString()}`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "Unable to update dashboard view.");
+      }
+      const fresh = (await res.json()) as PortfolioAnalyticsSnapshot;
+      snapshotCacheRef.current.set(
+        `${fresh.scope.portfolioFilterId}::${fresh.scope.currency}`,
+        fresh,
+      );
+      if (seq === requestSeqRef.current) {
+        setSnapshot(fresh);
+        setSelectedPortfolioId(fresh.scope.portfolioFilterId);
+        setSelectedCurrency(fresh.scope.currency);
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      if (seq === requestSeqRef.current) {
+        setSelectedPortfolioId(snapshot.scope.portfolioFilterId);
+        setSelectedCurrency(snapshot.scope.currency);
+        setScopeError(
+          error instanceof Error
+            ? error.message
+            : "Unable to reload analytics snapshot.",
+        );
+      }
+    } finally {
+      if (seq === requestSeqRef.current) {
+        setIsLoadingScope(false);
+      }
+    }
+  }
+
+  if (snapshot.accountHasNoTransactions) {
+    return (
+      <div className="space-y-6">
+        <EmptyState
+          icon={FileUp}
+          title="Welcome to Folio"
+          description="Bring in your existing portfolio from a Microsoft Start / MSN Money CSV export, or add transactions manually to unlock live FIFO lots, historical valuation charts, XIRR/TWR analytics, and global benchmark comparisons."
+          actions={
+            <>
+              <ButtonLink href="/import-export">
+                <FileUp size={18} strokeWidth={1.75} aria-hidden="true" />
+                Import my CSV
+              </ButtonLink>
+              <ButtonLink href="/transactions" variant="secondary">
+                <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
+                Add first transaction
+              </ButtonLink>
+            </>
+          }
+        />
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Card className="p-5">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+              1. Exact Ledger Math
+            </p>
+            <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
+              Every Buy, Sell, Sell All, and Dividend is evaluated chronologically
+              with Decimal.js FIFO lot matching and historical purchase-date FX rates.
+            </p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+              2. Honest Pricing
+            </p>
+            <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
+              Stocks &amp; ETFs sync automatically from market providers. Closed or
+              obscure assets never invent synthetic prices or fake -100% drops.
+            </p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+              3. Benchmark Ready
+            </p>
+            <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
+              Compare your Time-Weighted Return and cash flows directly against the
+              S&amp;P 500, NASDAQ, Dow Jones, and Straits Times Index in one currency.
+            </p>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  const currency = snapshot.scope.currency;
+  const locale = snapshot.settings.numberFormat;
+  const { summary, performance, dividends, dataQuality } = snapshot;
+
+  const currentFxRate = livePoll.fxUsdToSgd?.rate ?? snapshot.fxUsdToSgd?.rate;
+  const totalRealizedAndDividends =
+    Number(summary.totalRealizedPnlInBase) +
+    Number(summary.totalDividendsInBase);
+
+  const cryptoNotFoundCount = unpricedOpenHoldings.filter(
+    (item) => item.assetType === "crypto",
+  ).length;
+  const providerNotFoundCount =
+    unpricedOpenHoldings.length - cryptoNotFoundCount;
+  const visibleUnpriced = unpricedOpenHoldings.slice(0, 8);
+  const extraUnpricedCount =
+    unpricedOpenHoldings.length - visibleUnpriced.length;
+
+  return (
+    <div className="space-y-6">
+      {/* Scope & Currency Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label className="sr-only" htmlFor="dashboard-portfolio-filter">
+            Portfolio scope
+          </label>
+          <div className="relative inline-flex items-center">
+            <select
+              id="dashboard-portfolio-filter"
+              value={selectedPortfolioId}
+              onChange={(e) =>
+                void loadAnalyticsScope({
+                  portfolioId: e.target.value,
+                  currency: selectedCurrency,
+                })
+              }
+              className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px] font-medium shadow-xs"
+            >
+              <option value="all">
+                All Portfolios ({snapshot.portfolios.length})
+              </option>
+              {snapshot.portfolios.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              className="pointer-events-none absolute right-2.5 text-ink-3"
+              aria-hidden="true"
+            />
+          </div>
+
+          <SegmentedControl
+            ariaLabel="Dashboard comparison currency"
+            options={CURRENCY_OPTIONS}
+            value={selectedCurrency}
+            layoutId="dashboard-currency-seg"
+            onChange={(nextCurrency) => {
+              if (nextCurrency !== selectedCurrency) {
+                void loadAnalyticsScope({
+                  portfolioId: selectedPortfolioId,
+                  currency: nextCurrency,
+                });
+              }
+            }}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 text-[12px] text-ink-3">
+          {currentFxRate && (
+            <span className="num rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2">
+              1 USD = {Number(currentFxRate).toFixed(4)} SGD
+            </span>
+          )}
+          <span
+            className="rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2"
+            title={livePoll.market.detailLabel}
+          >
+            {livePoll.market.badgeLabel}
+          </span>
+          <Button
+            variant="secondary"
+            size="xs"
+            shape="pill"
+            disabled={isLoadingScope}
+            onClick={() =>
+              void loadAnalyticsScope({
+                portfolioId: selectedPortfolioId,
+                currency: selectedCurrency,
+                forceRefresh: true,
+              })
+            }
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isLoadingScope ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            {isLoadingScope ? "Updating…" : "Refresh"}
+          </Button>
+        </div>
+      </div>
+
+      {scopeError && (
+        <div
+          role="alert"
+          className="rounded-[12px] border border-loss/30 bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
+        >
+          {scopeError}
+        </div>
+      )}
+
+      <div
+        className={`space-y-6 transition-opacity duration-200 ${
+          isLoadingScope ? "opacity-65" : "opacity-100"
+        }`}
+      >
+        {/* Row 1: 4 Key Metric Cards */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="p-4 sm:p-5">
+            <p className="text-[12.5px] font-medium text-ink-3">
+              Portfolio Value ({currency})
+            </p>
+            <p className="num mt-1.5 text-[28px] font-semibold tracking-[-0.025em] text-ink">
+              {formatMoney(summary.totalMarketValueInBase, currency, { locale })}
+            </p>
+            <div className="mt-2 flex items-center gap-1.5 text-[12.5px]">
+              <span className="text-ink-3">Today:</span>
+              <GainBadge
+                amount={summary.totalDayChangeInBase}
+                currency={currency}
+                percent={summary.totalDayChangePercent}
+                size="sm"
+              />
+            </div>
+          </Card>
+
+          <Card className="p-4 sm:p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-3">
+                Unrealized P&amp;L
+              </p>
+              <MetricTooltip
+                label="Unrealized P&L"
+                explanation="Profit or loss on shares you still hold today, comparing current market value against remaining FIFO purchase cost."
+              />
+            </div>
+            <div className="mt-2">
+              <GainBadge
+                amount={summary.totalUnrealizedPnlInBase}
+                currency={currency}
+                percent={summary.totalUnrealizedPnlPercent}
+                size="md"
+              />
+            </div>
+            <p className="num mt-2 text-[12.5px] text-ink-3">
+              Open cost basis{" "}
+              <span className="font-medium text-ink-2">
+                {formatMoney(summary.totalCostBasisInBase, currency, { locale })}
+              </span>
+            </p>
+          </Card>
+
+          <Card className="p-4 sm:p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-3">
+                Realized &amp; Dividends
+              </p>
+              <MetricTooltip
+                label="Realized P&L + Dividends"
+                explanation="Locked-in net gains from closed trades plus net dividends collected across the selected portfolio scope."
+              />
+            </div>
+            <div className="mt-2">
+              <GainBadge
+                amount={totalRealizedAndDividends}
+                currency={currency}
+                size="md"
+              />
+            </div>
+            <p className="num mt-2 text-[12.5px] text-ink-3">
+              Realized{" "}
+              {formatMoney(summary.totalRealizedPnlInBase, currency, { locale })}
+              {performance.winRatePercent
+                ? ` · ${performance.winRatePercent}% win rate`
+                : ""}
+            </p>
+          </Card>
+
+          <Card className="p-4 sm:p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-3">
+                Returns (TWR &amp; XIRR)
+              </p>
+              <MetricTooltip
+                label="Annualized TWR, Cumulative TWR & XIRR"
+                explanation="Annualized & Cumulative TWR measure pure portfolio strategy skill independent of cash-flow timing. Annualized XIRR measures your personal money-weighted return including deposits & withdrawals."
+              />
+            </div>
+            <dl className="mt-2.5 divide-y divide-line/60">
+              <div className="flex items-center justify-between gap-2 pb-1.5">
+                <dt className="text-[12px] font-medium text-ink-3">
+                  Annualized TWR
+                </dt>
+                <dd>
+                  <GainBadge
+                    percent={performance.annualizedTwrPercent}
+                    size="lg"
+                  />
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-2 py-1.5">
+                <dt className="text-[12px] font-medium text-ink-3">
+                  Cumulative TWR
+                </dt>
+                <dd>
+                  <GainBadge
+                    percent={performance.cumulativeTwrPercent}
+                    size="lg"
+                  />
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1.5">
+                <dt className="text-[12px] font-medium text-ink-3">
+                  Annualized XIRR
+                </dt>
+                <dd>
+                  <GainBadge percent={performance.xirrPercent} size="lg" />
+                </dd>
+              </div>
+            </dl>
+          </Card>
+        </div>
+
+        {/* Row 2: Main Valuation Chart & Compact Expandable Allocation Donut */}
+        <div
+          className={`grid grid-cols-1 gap-6 ${
+            isAllocationExpanded ? "lg:items-start" : "lg:items-stretch"
+          } lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]`}
+        >
+          <Card className="flex h-full flex-col p-4 sm:p-6">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+                Portfolio Value Over Time
+              </h2>
+              {snapshot.timeline.firstTransactionDate && (
+                <span className="num text-[12px] text-ink-3">
+                  Since {snapshot.timeline.firstTransactionDate}
+                </span>
+              )}
+            </div>
+            <PortfolioValueChart
+              points={snapshot.timeline.points}
+              currency={currency}
+              excludedUnpricedSymbols={snapshot.timeline.excludedUnpricedSymbols}
+            />
+          </Card>
+
+          <Card className="flex h-full flex-col p-4 sm:p-6">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+                Asset Allocation
+              </h2>
+              <span className="text-[12px] text-ink-3">
+                {summary.openCount} open position
+                {summary.openCount === 1 ? "" : "s"}
+              </span>
+            </div>
+            <AllocationDonut
+              allocations={snapshot.allocations}
+              currency={currency}
+              hasMissingSector={dataQuality.some(
+                (d) => d.kind === "missing_sector",
+              )}
+              onExpandedChange={setIsAllocationExpanded}
+            />
+          </Card>
+        </div>
+
+        {/* Row 3: Benchmark Comparison (moved up right below Portfolio Value Over Time) */}
+        <Card className="flex flex-col justify-between gap-4 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-accent/12 text-accent">
+                <ChartLine className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+                  Benchmark Comparison
+                </h2>
+                <p className="mt-0.5 text-[13px] text-ink-2">
+                  Annualized &amp; Cumulative TWR compared against S&amp;P 500,
+                  STI &amp; NASDAQ in {currency}.
+                </p>
+              </div>
+            </div>
+            <span className="rounded-full border border-line bg-surface-2/70 px-2.5 py-0.5 text-[11.5px] font-medium text-ink-2">
+              TWR · {currency}
+            </span>
+          </div>
+
+          {/* Mobile stacked Benchmark Comparison cards */}
+          <div className="divide-y divide-line/60 overflow-hidden rounded-[12px] border border-line bg-surface-2/35 sm:hidden">
+            <div className="bg-accent/6 p-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[13.5px] font-semibold text-ink">
+                    Your Portfolio
+                  </p>
+                  <p className="text-[11px] text-ink-3">
+                    Time-weighted return
+                  </p>
+                </div>
+                <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                  Baseline
+                </span>
+              </div>
+              <div className="mt-2.5 grid grid-cols-2 gap-2 text-[12px]">
+                <div>
+                  <p className="text-[10.5px] text-ink-3">Annualized TWR</p>
+                  <div className="num mt-0.5">
+                    <GainBadge
+                      percent={performance.annualizedTwrPercent}
+                      size="sm"
+                    />
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10.5px] text-ink-3">Cumulative TWR</p>
+                  <div className="num mt-0.5">
+                    <GainBadge
+                      percent={performance.cumulativeTwrPercent}
+                      size="sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {CORE_COMPARISON_BENCHMARKS.map((preset) => {
+              const bench = snapshot.benchmarks[preset.symbol];
+              const ok = bench && bench.status === "ok";
+              const annRet = ok ? bench.annualizedReturnPercent : null;
+              const cumRet = ok ? bench.cumulativeReturnPercent : null;
+              const annSpread = ok
+                ? computeReturnSpread(
+                    performance.annualizedTwrPercent,
+                    bench.annualizedReturnPercent,
+                  )
+                : null;
+
+              return (
+                <div key={preset.symbol} className="p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <Link
+                      href="/benchmarks"
+                      className="group flex min-w-0 items-baseline gap-1.5"
+                    >
+                      <span className="truncate text-[13.5px] font-medium text-ink transition-colors group-hover:text-accent">
+                        {preset.label}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-ink-3">
+                        {formatSymbolForDisplay(preset.symbol)}
+                      </span>
+                    </Link>
+                    <div className="num shrink-0">
+                      {annSpread !== null ? (
+                        <GainBadge percent={annSpread} size="sm" pill />
+                      ) : (
+                        <span className="text-[12px] text-ink-3">—</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
+                    <div>
+                      <p className="text-[10.5px] text-ink-3">Annualized</p>
+                      <div className="num mt-0.5">
+                        <GainBadge percent={annRet} size="sm" />
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10.5px] text-ink-3">Cumulative</p>
+                      <div className="num mt-0.5">
+                        <GainBadge percent={cumRet} size="sm" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-[12px] border border-line bg-surface-2/35 sm:block">
+            <table className="w-full min-w-[460px] border-collapse text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-line/80 text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+                  <th className="py-2.5 pl-3.5 pr-3">Benchmark</th>
+                  <th className="px-3 py-2.5 text-right">Annualized TWR</th>
+                  <th className="px-3 py-2.5 text-right">Cumulative TWR</th>
+                  <th className="py-2.5 pl-3 pr-3.5 text-right">Ann. Spread</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line/60">
+                <tr className="bg-accent/6">
+                  <td className="py-2.5 pl-3.5 pr-3">
+                    <p className="font-semibold text-ink">Your Portfolio</p>
+                    <p className="text-[11px] text-ink-3">
+                      Time-weighted return
+                    </p>
+                  </td>
+                  <td className="num px-3 py-2.5 text-right">
+                    <GainBadge
+                      percent={performance.annualizedTwrPercent}
+                      size="sm"
+                    />
+                  </td>
+                  <td className="num px-3 py-2.5 text-right">
+                    <GainBadge
+                      percent={performance.cumulativeTwrPercent}
+                      size="sm"
+                    />
+                  </td>
+                  <td className="py-2.5 pl-3 pr-3.5 text-right">
+                    <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                      Baseline
+                    </span>
+                  </td>
+                </tr>
+
+                {CORE_COMPARISON_BENCHMARKS.map((preset) => {
+                  const bench = snapshot.benchmarks[preset.symbol];
+                  const ok = bench && bench.status === "ok";
+                  const annRet = ok ? bench.annualizedReturnPercent : null;
+                  const cumRet = ok ? bench.cumulativeReturnPercent : null;
+                  const annSpread = ok
+                    ? computeReturnSpread(
+                        performance.annualizedTwrPercent,
+                        bench.annualizedReturnPercent,
+                      )
+                    : null;
+
+                  return (
+                    <tr
+                      key={preset.symbol}
+                      className="transition-colors hover:bg-surface-2/70"
+                    >
+                      <td className="py-2.5 pl-3.5 pr-3">
+                        <Link
+                          href="/benchmarks"
+                          className="group flex items-baseline gap-1.5"
+                        >
+                          <span className="font-medium text-ink transition-colors group-hover:text-accent">
+                            {preset.label}
+                          </span>
+                          <span className="text-[11px] text-ink-3">
+                            {formatSymbolForDisplay(preset.symbol)}
+                          </span>
+                        </Link>
+                      </td>
+                      <td className="num px-3 py-2.5 text-right">
+                        <GainBadge percent={annRet} size="sm" />
+                      </td>
+                      <td className="num px-3 py-2.5 text-right">
+                        <GainBadge percent={cumRet} size="sm" />
+                      </td>
+                      <td className="num py-2.5 pl-3 pr-3.5 text-right">
+                        {annSpread !== null ? (
+                          <GainBadge percent={annSpread} size="sm" pill />
+                        ) : (
+                          <span className="text-[12px] text-ink-3">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line/70 pt-3.5">
+            <p className="text-[12px] text-ink-3">
+              {snapshot.timeline.firstTransactionDate
+                ? `Aligned from ${snapshot.timeline.firstTransactionDate} · `
+                : ""}
+              Curves, cash-flow simulation &amp; CAPM risk
+            </p>
+            <ButtonLink
+              href="/benchmarks"
+              variant="primary"
+              size="sm"
+              shape="pill"
+              className="w-full font-semibold sm:w-auto"
+            >
+              <ChartLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>View Benchmark Detail</span>
+              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </ButtonLink>
+          </div>
+        </Card>
+
+        {/* Row 4: Compact Expandable Movers Today & All-Time Open Performers */}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+          <MoverSummaryCard
+            title="Today's Movers"
+            headerRight={
+              <Link
+                href="/holdings"
+                className="inline-flex items-center gap-1 text-[12.5px] font-medium text-accent hover:underline"
+              >
+                Holdings
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            }
+            primaryTitle="Top Gainers"
+            primaryEmpty="No priced holdings gaining today."
+            primaryRows={snapshot.movers.topGainersToday}
+            secondaryTitle="Top Losers"
+            secondaryEmpty="No priced holdings declining today."
+            secondaryRows={snapshot.movers.topLosersToday}
+            mode="today"
+            currency={currency}
+          />
+
+          <MoverSummaryCard
+            title="All-Time Open Performers"
+            headerRight={
+              <span className="text-[12px] text-ink-3">Unrealized %</span>
+            }
+            primaryTitle="Best Performers"
+            primaryEmpty="No open positions with positive unrealized return."
+            primaryRows={snapshot.movers.topGainersAllTime}
+            secondaryTitle="Laggards"
+            secondaryEmpty="No open positions in unrealized loss."
+            secondaryRows={snapshot.movers.topLosersAllTime}
+            mode="all-time"
+            currency={currency}
+          />
+        </div>
+
+        {/* Row 5: Dividends & Risk alongside Collapsible Data Quality & Assumptions */}
+        <div
+          className={`grid grid-cols-1 gap-6 lg:grid-cols-2 ${
+            unpricedOpenHoldings.length > 0 && !isQualityExpanded
+              ? "lg:items-stretch"
+              : "lg:items-start"
+          }`}
+        >
+          <Card className="flex h-full flex-col justify-between gap-3.5 p-4 sm:p-5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
+                  Additional Info
+                </p>
+                <h2 className="mt-0.5 text-[15px] font-semibold tracking-[-0.01em] text-ink">
+                  Dividends &amp; Risk
+                </h2>
+              </div>
+              <Coins className="h-4 w-4 text-ink-3" aria-hidden="true" />
+            </div>
+
+            <dl className="grid grid-cols-2 gap-2.5 rounded-[12px] border border-line bg-surface-2/45 p-3">
+              <div>
+                <dt className="text-[11px] text-ink-3">Lifetime Dividends</dt>
+                <dd className="num mt-0.5 text-[14px] font-semibold text-ink">
+                  {formatMoney(dividends.totalDividendsInBase, currency, {
+                    locale,
+                  })}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] text-ink-3">Trailing 12M</dt>
+                <dd className="num mt-0.5 text-[14px] font-semibold text-ink">
+                  {formatMoney(dividends.trailing12MonthsInBase, currency, {
+                    locale,
+                  })}
+                </dd>
+              </div>
+              <div className="col-span-2 border-t border-line/70 pt-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt className="text-[11px] text-ink-3">Est. Annual Yield</dt>
+                  <dd className="num text-[13.5px] font-semibold text-ink">
+                    {dividends.projectedAnnualIncomeInBase !== null
+                      ? formatMoney(
+                          dividends.projectedAnnualIncomeInBase,
+                          currency,
+                          { locale },
+                        )
+                      : "Unavailable"}
+                  </dd>
+                </div>
+                <p className="mt-0.5 text-[10.5px] text-ink-3">
+                  {dividends.holdingsWithYieldCount}/
+                  {dividends.openHoldingsCount} open holdings reporting yield
+                </p>
+              </div>
+            </dl>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
+                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">
+                  Max Drawdown
+                </p>
+                <p className="num mt-0.5 text-[12.5px] font-semibold text-loss sm:text-[13px]">
+                  {performance.drawdown.maxDrawdownPercent
+                    ? formatPercent(performance.drawdown.maxDrawdownPercent)
+                    : "—"}
+                </p>
+              </div>
+              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
+                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">
+                  Volatility
+                </p>
+                <p className="num mt-0.5 text-[12.5px] font-semibold text-ink sm:text-[13px]">
+                  {performance.volatilityPercent
+                    ? `${performance.volatilityPercent}%`
+                    : "—"}
+                </p>
+              </div>
+              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
+                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">Sharpe</p>
+                <p className="num mt-0.5 text-[12.5px] font-semibold text-ink sm:text-[13px]">
+                  {performance.sharpeRatio ?? "—"}
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          <div className="flex h-full flex-col gap-3.5">
+            <Card className="p-4 sm:p-5">
+            <button
+              type="button"
+              onClick={() => setIsQualityExpanded((prev) => !prev)}
+              aria-expanded={isQualityExpanded}
+              className="flex w-full items-start justify-between gap-3 rounded-[10px] text-left focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">
+                    Data Quality &amp; Assumptions
+                  </h2>
+                  {dataQuality.length === 0 ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-gain/25 bg-gain/10 px-2 py-0.5 text-[11px] font-medium text-gain">
+                      <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                      All clear
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">
+                      {dataQuality.some((d) => d.severity === "warning") ? (
+                        <AlertTriangle
+                          className="h-3 w-3 text-amber-500"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Info
+                          className="h-3 w-3 text-accent"
+                          aria-hidden="true"
+                        />
+                      )}
+                      {dataQuality.length} note
+                      {dataQuality.length === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[12px] text-ink-3">
+                  FIFO · Dividends as{" "}
+                  {snapshot.scope.dividendMode === "shares"
+                    ? "Reinvested Shares"
+                    : "Cash Payouts"}
+                  {!isQualityExpanded && dataQuality.length > 0
+                    ? " · Tap to review pricing & FX coverage notes"
+                    : ""}
+                </p>
+              </div>
+
+              <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2/80 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
+                <ChevronDown
+                  size={15}
+                  aria-hidden="true"
+                  className={`transition-transform duration-200 ${
+                    isQualityExpanded ? "rotate-180" : ""
+                  }`}
+                />
+              </span>
+            </button>
+
+            <AnimatePresence initial={false}>
+              {isQualityExpanded && (
+                <motion.div
+                  key="data-quality-panel"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{
+                    opacity: 1,
+                    height: "auto",
+                    transition: { ...springSmooth, opacity: fadeQuick },
+                  }}
+                  exit={{
+                    opacity: 0,
+                    height: 0,
+                    transition: { ...fadeQuick, opacity: { duration: 0.1 } },
+                  }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-3.5 border-t border-line/70 pt-3.5">
+                    <p className="text-[12.5px] text-ink-3">
+                      Transparent notes on excluded unpriced symbols, historical
+                      FX coverage, and cost-basis edge cases.
+                    </p>
+
+                    {dataQuality.length === 0 ? (
+                      <div className="mt-3 flex items-center gap-2.5 rounded-[12px] border border-gain/25 bg-gain/8 px-3.5 py-2.5 text-[13px] text-gain">
+                        <CheckCircle2
+                          className="h-4 w-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          All open positions have live/cached prices and
+                          complete FX history.
+                        </span>
+                      </div>
+                    ) : (
+                      <ul className="mt-3 divide-y divide-line">
+                        {dataQuality.map((item, idx) => (
+                          <li
+                            key={`${item.kind}-${item.symbol ?? idx}`}
+                            className="flex flex-wrap items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
+                          >
+                            <div className="flex min-w-0 items-start gap-2.5">
+                              {item.severity === "warning" ? (
+                                <AlertTriangle
+                                  className="mt-0.5 h-4 w-4 shrink-0 text-amber-500"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Info
+                                  className="mt-0.5 h-4 w-4 shrink-0 text-accent"
+                                  aria-hidden="true"
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-[13px] font-medium text-ink">
+                                  {item.title}
+                                </p>
+                                <p className="text-[12px] text-ink-2">
+                                  {item.description}
+                                </p>
+                              </div>
+                            </div>
+                            {item.actionHref && item.actionLabel && (
+                              <Link
+                                href={item.actionHref}
+                                className="shrink-0 rounded-full border border-line bg-surface-2 px-3 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-surface"
+                              >
+                                {item.actionLabel}
+                              </Link>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </Card>
+
+            {unpricedOpenHoldings.length > 0 && (
+              <Card className="flex flex-1 flex-col justify-between gap-2.5 p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h2 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink">
+                      Prices Not Found
+                    </h2>
+                    <span className="num inline-flex shrink-0 items-center rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-ink-2">
+                      {unpricedOpenHoldings.length}
+                    </span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {retryableNotFoundSymbols.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="xs"
+                        shape="pill"
+                        disabled={livePoll.isRetrying}
+                        onClick={() => {
+                          void livePoll
+                            .retrySymbols(retryableNotFoundSymbols)
+                            .then((res) => {
+                              if (
+                                res &&
+                                Object.values(res).some(
+                                  (q) => q.price !== null,
+                                )
+                              ) {
+                                void loadAnalyticsScope({
+                                  portfolioId: selectedPortfolioId,
+                                  currency: selectedCurrency,
+                                  forceRefresh: true,
+                                });
+                              }
+                            });
+                        }}
+                      >
+                        <RefreshCw
+                          size={11.5}
+                          className={
+                            livePoll.isRetrying ? "animate-spin" : undefined
+                          }
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {livePoll.isRetrying ? "Checking…" : "Retry"}
+                        </span>
+                      </Button>
+                    )}
+                    <ButtonLink
+                      href="/holdings#not-found"
+                      variant="tinted"
+                      size="xs"
+                      shape="pill"
+                    >
+                      <span>Manage</span>
+                      <ArrowRight size={11.5} aria-hidden="true" />
+                    </ButtonLink>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {visibleUnpriced.map((item) => {
+                    const isCrypto = item.assetType === "crypto";
+                    return (
+                      <Link
+                        key={item.key}
+                        href={`/holdings/${encodeURIComponent(item.symbol)}`}
+                        title={
+                          isCrypto
+                            ? `${formatSymbolForDisplay(item.symbol)} · Crypto pricing disabled — tap to set manual price`
+                            : `${formatSymbolForDisplay(item.symbol)} · Not found on providers — tap to retry or set manual price`
+                        }
+                        className="inline-flex h-6.5 items-center gap-1.5 rounded-full border border-line bg-surface-2/65 px-2.5 text-[11.5px] transition-colors hover:border-accent/40 hover:bg-surface-2"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            isCrypto ? "bg-ink-3/60" : "bg-amber-500"
+                          }`}
+                        />
+                        <span
+                          className={`font-mono font-semibold ${
+                            isCrypto ? "text-ink-2" : "text-ink"
+                          }`}
+                        >
+                          {formatSymbolForDisplay(item.symbol)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                  {extraUnpricedCount > 0 && (
+                    <Link
+                      href="/holdings#not-found"
+                      className="num inline-flex h-6.5 items-center rounded-full border border-line bg-surface-2/40 px-2.5 text-[11.5px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                    >
+                      +{extraUnpricedCount} more
+                    </Link>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11.5px] text-ink-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    {providerNotFoundCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          aria-hidden="true"
+                          className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                        />
+                        <span>Not found ({providerNotFoundCount})</span>
+                      </span>
+                    )}
+                    {cryptoNotFoundCount > 0 && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          aria-hidden="true"
+                          className="h-1.5 w-1.5 rounded-full bg-ink-3/60"
+                        />
+                        <span>Crypto ({cryptoNotFoundCount})</span>
+                      </span>
+                    )}
+                  </div>
+                  <span>Skipped from live polling</span>
+                </div>
+              </Card>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

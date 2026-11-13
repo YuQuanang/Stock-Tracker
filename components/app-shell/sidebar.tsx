@@ -9,7 +9,7 @@ import { NAV_ITEMS } from "@/components/app-shell/nav-items";
 import { MarketStatusBadge } from "@/components/app-shell/market-status-badge";
 import { SignOutButton } from "@/components/app-shell/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { springSmooth } from "@/lib/motion";
+import { springSmooth, springSnappy } from "@/lib/motion";
 
 const EXPANDED_WIDTH = 260;
 const COLLAPSED_WIDTH = 76;
@@ -22,18 +22,23 @@ interface SidebarProps {
 export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [pendingNav, setPendingNav] = useState<{ href: string; from: string } | null>(null);
+  const effectivePathname =
+    pendingNav && pendingNav.from === pathname ? pendingNav.href : pathname;
 
   return (
     <motion.aside
       initial={false}
       animate={{ width: isCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH }}
       transition={springSmooth}
-      className="material sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-line px-3 py-5 md:flex"
-      aria-label="Primary"
+      className="material sticky top-0 hidden h-dvh shrink-0 flex-col overflow-hidden border-r border-line px-3 py-5 md:flex"
+      aria-label="Desktop navigation"
     >
       <div className="mb-6 flex h-10 items-center justify-between px-2">
         {!isCollapsed && (
-          <span className="text-[19px] font-semibold tracking-tight">Folio</span>
+          <span className="whitespace-nowrap text-[19px] font-semibold tracking-tight">
+            Folio
+          </span>
         )}
         <button
           type="button"
@@ -67,11 +72,17 @@ export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
 
       <nav className="flex flex-1 flex-col gap-1">
         {NAV_ITEMS.map(({ href, label, Icon }) => {
-          const isActive = pathname === href || pathname.startsWith(`${href}/`);
+          const isActive =
+            effectivePathname === href || effectivePathname.startsWith(`${href}/`);
           return (
             <Link
               key={href}
               href={href}
+              onClick={() => {
+                if (pathname !== href) {
+                  setPendingNav({ href, from: pathname });
+                }
+              }}
               aria-current={isActive ? "page" : undefined}
               title={isCollapsed ? label : undefined}
               className={`relative flex h-10 items-center gap-3 rounded-[var(--radius-control)] px-3 text-[15px] transition-colors duration-200 ${
@@ -81,7 +92,7 @@ export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
               {isActive && (
                 <motion.span
                   layoutId="sidebar-active-pill"
-                  transition={springSmooth}
+                  transition={springSnappy}
                   className="absolute inset-0 rounded-[var(--radius-control)] bg-surface-2"
                 />
               )}
@@ -91,7 +102,9 @@ export function Sidebar({ onOpenCommandPalette }: SidebarProps) {
                 aria-hidden="true"
                 className="relative shrink-0"
               />
-              {!isCollapsed && <span className="relative font-medium">{label}</span>}
+              {!isCollapsed && (
+                <span className="relative truncate font-medium">{label}</span>
+              )}
             </Link>
           );
         })}

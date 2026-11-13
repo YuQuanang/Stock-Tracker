@@ -7,4 +7,8 @@ export * from "@/lib/finance/splits";
 export * from "@/lib/finance/fifo";
 export * from "@/lib/finance/symbol-wide-sell-all";
 export * from "@/lib/finance/pnl";
-
+export * from "@/lib/finance/xirr";
+export * from "@/lib/finance/twr";
+export * from "@/lib/finance/drawdown";
+export * from "@/lib/finance/risk-metrics";
+export * from "@/lib/finance/timeline";

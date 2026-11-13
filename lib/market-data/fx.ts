@@ -30,9 +30,13 @@ export interface ExchangeRateSnapshot {
   isHistorical: boolean;
 }
 
-const LATEST_FX_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const LATEST_FX_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const HISTORICAL_FX_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const fxCache = new TtlCache<ExchangeRateSnapshot>(300);
+const fxCache = new TtlCache<ExchangeRateSnapshot>(300, "fx-latest");
+
+export function getCachedUsdToSgdSnapshot(): ExchangeRateSnapshot | undefined {
+  return fxCache.get("USD->SGD|latest");
+}
 
 interface FrankfurterResponse {
   amount?: number;

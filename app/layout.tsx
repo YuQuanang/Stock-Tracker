@@ -4,11 +4,20 @@ import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  applicationName: "Folio",
   title: {
     default: "Folio",
     template: "%s · Folio",
   },
   description: "A personal stock and portfolio tracker.",
+  appleWebApp: {
+    capable: true,
+    title: "Folio",
+    statusBarStyle: "default",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   // Private app: ask search engines not to index it.
   robots: { index: false, follow: false },
 };
@@ -16,6 +25,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#f5f5f7" },
     { media: "(prefers-color-scheme: dark)", color: "#000000" },

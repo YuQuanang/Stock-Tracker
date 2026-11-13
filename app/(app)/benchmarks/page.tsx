@@ -1,23 +1,25 @@
 import type { Metadata } from "next";
-import { ChartLine } from "lucide-react";
-import { EmptyState } from "@/components/ui/empty-state";
+import { connection } from "next/server";
+import { BenchmarksView } from "@/components/benchmarks/benchmarks-view";
 import { PageHeader } from "@/components/ui/page-header";
+import { computePortfolioAnalytics } from "@/lib/services/analytics";
 
 export const metadata: Metadata = { title: "Benchmarks" };
 
-export default function BenchmarksPage() {
+export default async function BenchmarksPage() {
+  await connection();
+  const initialSnapshot = await computePortfolioAnalytics({
+    includeBenchmarks: true,
+    includeFundamentals: false,
+  });
+
   return (
     <>
       <PageHeader
         title="Benchmarks"
-        subtitle="Compare your portfolio with the S&P 500, NASDAQ, Dow Jones and STI."
+        subtitle="Currency-aligned Time-Weighted Return, same-cash-flow simulations, and CAPM risk metrics."
       />
-      <EmptyState
-        icon={ChartLine}
-        title="Nothing to compare yet"
-        description="Benchmark comparison needs transactions and price history. Import your CSV first, and the comparison will appear here."
-      />
+      <BenchmarksView initialSnapshot={initialSnapshot} />
     </>
   );
 }
-

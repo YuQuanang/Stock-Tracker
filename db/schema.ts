@@ -170,6 +170,9 @@ export const instrument = pgTable(
     manualPrice: decimalColumn("manual_price"),
     // Marks collapsed or worthless assets so they never break totals.
     isDelisted: boolean("is_delisted").notNull().default(false),
+    // Set when providers return `not_found` so unlisted symbols aren't retried endlessly.
+    priceNotFoundAt: timestamp("price_not_found_at", { withTimezone: true }),
+    priceNotFoundReason: text("price_not_found_reason"),
     createdAt: createdAtColumn(),
   },
   (table) => [uniqueIndex("instrument_symbol_unique").on(table.symbol)],

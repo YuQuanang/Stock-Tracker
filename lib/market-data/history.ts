@@ -102,11 +102,19 @@ interface YahooHistoryChartResponse {
   };
 }
 
-const intradayCache = new TtlCache<PriceHistoryResult>(120);
-/** Tracks when a daily `price_bar` sync last succeeded for `instrumentId|startDate`. */
-const dailySyncFreshness = new TtlCache<boolean>(300);
+interface DailySyncWindow {
+  minDate: string;
+  maxDate: string;
+}
+
+const intradayCache = new TtlCache<PriceHistoryResult>(120, "intraday-history");
+/** Tracks when a daily `price_bar` sync last succeeded per instrument across any startDate window. */
+const dailySyncFreshness = new TtlCache<DailySyncWindow>(400, "daily-sync");
+const dailySyncNotFoundCache = new TtlCache<string>(200, "daily-sync-not-found");
 const DAILY_SYNC_TTL_OPEN_MS = 5 * 60 * 1000; // 5 minutes during session
 const DAILY_SYNC_TTL_CLOSED_MS = 60 * 60 * 1000; // 1 hour when closed
+const DAILY_SYNC_NOT_FOUND_TTL_MS = 15 * 60 * 1000;
+const STOOQ_HISTORY_TIMEOUT_MS = 5000;
 
 function addCalendarDays(isoDate: string, days: number): string {
   const [y, m, d] = isoDate.split("-").map(Number);
@@ -280,18 +288,29 @@ async function fetchStooqDailyBars(params: {
   )}&d1=${d1}&d2=${d2}&i=d`;
 
   const fetchFn = params.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    STOOQ_HISTORY_TIMEOUT_MS,
+  );
   let response: Response;
   try {
     response = await fetchFn(url, {
       headers: { "User-Agent": BROWSER_USER_AGENT },
+      signal: controller.signal,
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
     throw new MarketDataError(
       "network",
       "Stooq",
-      `Could not reach Stooq history for "${params.symbol}".`,
+      isAbort
+        ? `Stooq history timed out for "${params.symbol}".`
+        : `Could not reach Stooq history for "${params.symbol}".`,
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
@@ -476,6 +495,8 @@ export interface EnsureDailyBarsOptions {
   fetchImpl?: typeof fetch;
   chain?: ProviderChain;
   forceRefresh?: boolean;
+  /** Skip external provider calls when cached DB bars are present. */
+  cacheOnly?: boolean;
 }
 
 /**
@@ -579,9 +600,14 @@ export async function ensureInstrumentDailyBars(
     targetInstrument.exchangeCode,
   );
   const session = getMarketSessionStatus(region, now);
-  const syncKey = `${targetInstrument.id}|${options.startDate}|${endDate}`;
-  const recentlySynced =
-    !options.forceRefresh && dailySyncFreshness.get(syncKey, now.getTime()) === true;
+  const freshWindow = !options.forceRefresh
+    ? dailySyncFreshness.get(targetInstrument.id, now.getTime())
+    : undefined;
+  const recentlySynced = Boolean(
+    freshWindow &&
+      freshWindow.minDate <= options.startDate &&
+      freshWindow.maxDate >= endDate,
+  );
 
   // Check whether cached DB bars already span from near `startDate` to near `endDate`.
   const earliestCached = cachedRows[0]?.date ?? null;
@@ -592,10 +618,67 @@ export async function ensureInstrumentDailyBars(
   const coversEnd =
     latestCached !== null && latestCached >= addCalendarDays(endDate, -4);
 
+  if (options.cacheOnly && !options.forceRefresh) {
+    if (cachedRows.length > 0) {
+      return {
+        instrumentId: targetInstrument.id,
+        currency: targetInstrument.currency,
+        status: "ok",
+        source: cachedRows[cachedRows.length - 1]?.source ?? "cache",
+        bars: cachedRows.map(mapDbPriceBarToPoint),
+      };
+    }
+    return {
+      instrumentId: targetInstrument.id,
+      currency: targetInstrument.currency,
+      status: "unavailable",
+      unavailableReason: `Historical price data is not yet cached for ${cleanSymbol}.`,
+      source: null,
+      bars: [],
+    };
+  }
+
+  if (
+    !options.forceRefresh &&
+    targetInstrument.priceNotFoundAt !== null &&
+    targetInstrument.priceNotFoundAt !== undefined
+  ) {
+    if (cachedRows.length > 0) {
+      return {
+        instrumentId: targetInstrument.id,
+        currency: targetInstrument.currency,
+        status: "stale_cache",
+        unavailableReason:
+          targetInstrument.priceNotFoundReason ??
+          `Market prices unavailable for ${cleanSymbol}.`,
+        source: cachedRows[cachedRows.length - 1]?.source ?? "cache",
+        bars: cachedRows.map(mapDbPriceBarToPoint),
+      };
+    }
+    return {
+      instrumentId: targetInstrument.id,
+      currency: targetInstrument.currency,
+      status: "unavailable",
+      unavailableReason:
+        targetInstrument.priceNotFoundReason ??
+        `Historical price data is not available for ${cleanSymbol}.`,
+      source: null,
+      bars: [],
+    };
+  }
+
+  const todayIso = getSingaporeDateString(now);
+  const historicalSpanComplete =
+    coversStart &&
+    coversEnd &&
+    (!session.isOpen ||
+      endDate < addCalendarDays(todayIso, -1) ||
+      (latestCached !== null && latestCached >= endDate));
+
   if (
     !options.forceRefresh &&
     cachedRows.length > 0 &&
-    (recentlySynced || (!session.isOpen && coversStart && coversEnd))
+    (recentlySynced || historicalSpanComplete)
   ) {
     return {
       instrumentId: targetInstrument.id,
@@ -603,6 +686,22 @@ export async function ensureInstrumentDailyBars(
       status: "ok",
       source: cachedRows[cachedRows.length - 1]?.source ?? "cache",
       bars: cachedRows.map(mapDbPriceBarToPoint),
+    };
+  }
+
+  if (
+    !options.forceRefresh &&
+    !options.fetchImpl &&
+    cachedRows.length === 0 &&
+    dailySyncNotFoundCache.get(targetInstrument.id, now.getTime())
+  ) {
+    return {
+      instrumentId: targetInstrument.id,
+      currency: targetInstrument.currency,
+      status: "unavailable",
+      unavailableReason: `Historical price data is currently unavailable for ${cleanSymbol}.`,
+      source: null,
+      bars: [],
     };
   }
 
@@ -643,9 +742,26 @@ export async function ensureInstrumentDailyBars(
       resolved.value.bars,
       database,
     );
+    if (targetInstrument.priceNotFoundAt) {
+      await database
+        .update(instrument)
+        .set({ priceNotFoundAt: null, priceNotFoundReason: null })
+        .where(eq(instrument.id, targetInstrument.id))
+        .catch(() => undefined);
+    }
+    const mergedWindow: DailySyncWindow = {
+      minDate:
+        freshWindow && freshWindow.minDate < options.startDate
+          ? freshWindow.minDate
+          : options.startDate,
+      maxDate:
+        freshWindow && freshWindow.maxDate > endDate
+          ? freshWindow.maxDate
+          : endDate,
+    };
     dailySyncFreshness.set(
-      syncKey,
-      true,
+      targetInstrument.id,
+      mergedWindow,
       session.isOpen ? DAILY_SYNC_TTL_OPEN_MS : DAILY_SYNC_TTL_CLOSED_MS,
       now.getTime(),
     );
@@ -669,7 +785,7 @@ export async function ensureInstrumentDailyBars(
       source: resolved.provider,
       bars: refreshedRows.map(mapDbPriceBarToPoint),
     };
-  } catch {
+  } catch (error) {
     // Master Prompt Rule 5: Never fabricate data; if cached bars exist, return
     // them explicitly labelled `stale_cache`.
     if (cachedRows.length > 0) {
@@ -680,6 +796,28 @@ export async function ensureInstrumentDailyBars(
         source: cachedRows[cachedRows.length - 1]?.source ?? "cache",
         bars: cachedRows.map(mapDbPriceBarToPoint),
       };
+    }
+
+    if (
+      error instanceof MarketDataError &&
+      error.kind === "not_found"
+    ) {
+      if (!options.fetchImpl) {
+        dailySyncNotFoundCache.set(
+          targetInstrument.id,
+          "not_found",
+          DAILY_SYNC_NOT_FOUND_TTL_MS,
+          now.getTime(),
+        );
+      }
+      await database
+        .update(instrument)
+        .set({
+          priceNotFoundAt: now,
+          priceNotFoundReason: error.message,
+        })
+        .where(eq(instrument.id, targetInstrument.id))
+        .catch(() => undefined);
     }
 
     return {
@@ -704,6 +842,7 @@ export async function fetchPriceHistoryForRange(params: {
   now?: Date;
   fetchImpl?: typeof fetch;
   chain?: ProviderChain;
+  forceRefresh?: boolean;
 }): Promise<PriceHistoryResult> {
   const symbol = params.symbol.trim();
   const now = params.now ?? new Date();
@@ -722,7 +861,43 @@ export async function fetchPriceHistoryForRange(params: {
     };
   }
 
+  const database = params.db ?? (await getDb());
+  const existingRows = await database
+    .select()
+    .from(instrument)
+    .where(eq(instrument.symbol, symbol))
+    .limit(1);
+  const existingInstr = existingRows[0];
+
+  if (existingInstr?.isDelisted) {
+    return {
+      symbol,
+      currency: existingInstr.currency,
+      range: params.range,
+      interval: "1d",
+      status: "unavailable",
+      unavailableReason: "Instrument is marked delisted.",
+      source: null,
+      bars: [],
+    };
+  }
+
   if (params.range === "1D" || params.range === "5D") {
+    if (existingInstr?.priceNotFoundAt && !params.forceRefresh) {
+      return {
+        symbol,
+        currency: existingInstr.currency,
+        range: params.range,
+        interval: "1d",
+        status: "unavailable",
+        unavailableReason:
+          existingInstr.priceNotFoundReason ??
+          `Market history is unavailable for ${symbol}.`,
+        source: null,
+        bars: [],
+      };
+    }
+
     const region = inferMarketRegion(symbol);
     const session = getMarketSessionStatus(region, now);
     const ttl = session.isOpen ? 60_000 : 15 * 60_000;
@@ -789,4 +964,5 @@ export async function fetchPriceHistoryForRange(params: {
 export function clearHistoryCaches(): void {
   intradayCache.clear();
   dailySyncFreshness.clear();
+  dailySyncNotFoundCache.clear();
 }

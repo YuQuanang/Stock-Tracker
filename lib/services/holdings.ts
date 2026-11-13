@@ -27,6 +27,7 @@ import {
   resolveSellAllSourceId,
   safeDivide,
   type SplitAction,
+  type TimelineBucketInput,
   toDecimal,
   toDecimalString,
   toNullableDecimalString,
@@ -78,6 +79,8 @@ export interface StockDetailSnapshot {
     assetType: string;
     manualPrice: string | null;
     isDelisted: boolean;
+    priceNotFound: boolean;
+    priceNotFoundReason: string | null;
   };
   portfolios: Portfolio[];
   buckets: SerializedFifoBucket[];
@@ -91,21 +94,33 @@ export interface StockDetailSnapshot {
   baseCurrency: string;
 }
 
-/**
- * Evaluates independent FIFO buckets across all holdings portfolios (optionally
- * filtered to a single `instrumentId`).
- */
-export async function loadSerializedFifoBuckets(options: {
-  instrumentId?: string;
-  db?: Database;
-} = {}): Promise<{
+export interface PortfolioFifoSnapshot {
   buckets: SerializedFifoBucket[];
+  timelineBuckets: TimelineBucketInput[];
+  splitsByInstrument: Map<string, SplitAction[]>;
+  fxBook: FxRateBook;
   baseCurrency: string;
   latestCachedUsdSgd: string | null;
-}> {
+  appSettings: Awaited<ReturnType<typeof getOrCreateSettings>>;
+  nonSgdMissingFxCount: number;
+  holdingsTransactionCount: number;
+}
+
+/**
+ * Evaluates independent FIFO buckets across all holdings portfolios (optionally
+ * filtered to a single `instrumentId`), and exposes expanded timeline inputs,
+ * FX book, and corporate splits for analytics without duplicate queries.
+ */
+export async function loadPortfolioFifoSnapshot(options: {
+  instrumentId?: string;
+  baseCurrencyOverride?: string;
+  db?: Database;
+} = {}): Promise<PortfolioFifoSnapshot> {
   const database = options.db ?? (await getDb());
   const appSettings = await getOrCreateSettings(database);
-  const baseCurrency = appSettings.baseCurrency.toUpperCase();
+  const baseCurrency = (
+    options.baseCurrencyOverride ?? appSettings.baseCurrency
+  ).toUpperCase();
 
   const txRows = await database
     .select({
@@ -205,9 +220,24 @@ export async function loadSerializedFifoBuckets(options: {
   }
 
   const fifoByGroupKey = new Map<string, ReturnType<typeof evaluateFifoLedger>>();
+  const timelineBuckets: TimelineBucketInput[] = [];
+  let nonSgdMissingFxCount = 0;
+  let holdingsTransactionCount = 0;
+
   for (const instrumentGroups of groupsByInstrument.values()) {
     const instr = instrumentGroups[0].instr;
     const splits = splitsByInstrument.get(instr.id) ?? [];
+
+    for (const group of instrumentGroups) {
+      holdingsTransactionCount += group.txs.length;
+      if (instr.currency.toUpperCase() !== "SGD") {
+        for (const tx of group.txs) {
+          if (tx.totalCostSgd === null && tx.purchaseFxRate === null) {
+            nonSgdMissingFxCount += 1;
+          }
+        }
+      }
+    }
 
     const expanded = applySymbolWideSellAll(
       instrumentGroups.map((group) => ({
@@ -219,9 +249,23 @@ export async function loadSerializedFifoBuckets(options: {
 
     for (const group of instrumentGroups) {
       const ledger = expanded.find((l) => l.portfolioId === group.portfolioId);
+      const txsForBucket = ledger?.transactions ?? [];
+      timelineBuckets.push({
+        portfolioId: group.portfolioId,
+        portfolioName: group.portfolioName,
+        instrumentId: instr.id,
+        symbol: instr.symbol,
+        currency: instr.currency,
+        manualPrice: instr.manualPrice
+          ? toDecimalString(toDecimal(instr.manualPrice), 10)
+          : null,
+        isDelisted: instr.isDelisted,
+        transactions: txsForBucket,
+      });
+
       fifoByGroupKey.set(
         `${group.portfolioId}::${instr.id}`,
-        evaluateFifoLedger(ledger?.transactions ?? [], {
+        evaluateFifoLedger(txsForBucket, {
           symbol: instr.symbol,
           dividendMode: appSettings.dividendMode,
           splits,
@@ -319,6 +363,8 @@ export async function loadSerializedFifoBuckets(options: {
         ? toDecimalString(toDecimal(group.instr.manualPrice), 10)
         : null,
       isDelisted: group.instr.isDelisted,
+      priceNotFound: Boolean(group.instr.priceNotFoundAt),
+      priceNotFoundReason: group.instr.priceNotFoundReason ?? null,
       sharesHeld: toDecimalString(fifo.sharesHeld, 12),
       openCostBasis: toDecimalString(fifo.openCostBasis, 12),
       openCostBasisInBase: toNullableDecimalString(
@@ -343,19 +389,53 @@ export async function loadSerializedFifoBuckets(options: {
 
   return {
     buckets,
+    timelineBuckets,
+    splitsByInstrument,
+    fxBook,
     baseCurrency,
     latestCachedUsdSgd: latestCachedUsdSgdRow?.rate ?? null,
+    appSettings,
+    nonSgdMissingFxCount,
+    holdingsTransactionCount,
+  };
+}
+
+/**
+ * Evaluates independent FIFO buckets across all holdings portfolios (optionally
+ * filtered to a single `instrumentId`).
+ */
+export async function loadSerializedFifoBuckets(options: {
+  instrumentId?: string;
+  baseCurrencyOverride?: string;
+  db?: Database;
+} = {}): Promise<{
+  buckets: SerializedFifoBucket[];
+  baseCurrency: string;
+  latestCachedUsdSgd: string | null;
+}> {
+  const snapshot = await loadPortfolioFifoSnapshot(options);
+  return {
+    buckets: snapshot.buckets,
+    baseCurrency: snapshot.baseCurrency,
+    latestCachedUsdSgd: snapshot.latestCachedUsdSgd,
   };
 }
 
 /** Server loader for `/holdings`. */
 export async function getHoldingsPageSnapshot(
-  db?: Database,
+  dbOrOptions?: Database | { db?: Database; cacheOnly?: boolean },
 ): Promise<HoldingsPageSnapshot> {
-  const database = db ?? (await getDb());
+  const resolvedOpts =
+    dbOrOptions && "select" in dbOrOptions
+      ? { db: dbOrOptions, cacheOnly: false }
+      : (dbOrOptions ?? {});
+  const database = resolvedOpts.db ?? (await getDb());
+  const cacheOnly = resolvedOpts.cacheOnly ?? false;
 
-  // Ensure all historical purchase FX snapshots are populated
-  await backfillMissingTransactionSgdTotals({ db: database });
+  if (!cacheOnly) {
+    // Ensure all historical purchase FX snapshots are populated
+    await backfillMissingTransactionSgdTotals({ db: database });
+  }
 
   const [portfolios, { buckets, baseCurrency, latestCachedUsdSgd }] =
     await Promise.all([
@@ -367,27 +447,32 @@ export async function getHoldingsPageSnapshot(
   const now = new Date();
   const initialMarket = getCombinedMarketOverview(now);
 
+  const cachedFxSnapshot: ExchangeRateSnapshot | null = latestCachedUsdSgd
+    ? {
+        from: "USD",
+        to: "SGD",
+        rate: toDecimalString(toDecimal(latestCachedUsdSgd), 6),
+        effectiveDate: initialMarket.sgtDate,
+        asOf: now.toISOString(),
+        source: "frankfurter",
+        label: "Cached FX rate",
+        isHistorical: false,
+      }
+    : null;
+
   const [initialQuotes, liveFx] = await Promise.all([
     resolveQuotesForSymbols({
       symbols: uniqueSymbols,
       db: database,
       now,
       includeSparklines: true,
+      cacheOnly,
     }),
-    fetchExchangeRateToSgd({ from: "USD", now }).catch((): ExchangeRateSnapshot | null =>
-      latestCachedUsdSgd
-        ? {
-            from: "USD",
-            to: "SGD",
-            rate: toDecimalString(toDecimal(latestCachedUsdSgd), 6),
-            effectiveDate: initialMarket.sgtDate,
-            asOf: now.toISOString(),
-            source: "frankfurter",
-            label: "Cached FX rate",
-            isHistorical: false,
-          }
-        : null,
-    ),
+    cacheOnly && cachedFxSnapshot
+      ? Promise.resolve(cachedFxSnapshot)
+      : fetchExchangeRateToSgd({ from: "USD", now }).catch(
+          (): ExchangeRateSnapshot | null => cachedFxSnapshot,
+        ),
   ]);
 
   return {
@@ -427,23 +512,22 @@ export async function getStockDetailSnapshot(
   const now = new Date();
   const initialMarket = getCombinedMarketOverview(now);
 
-  // Fetch initial 1Y daily history FIRST so `price_bar` is populated for sparklines
-  const initialHistory = await fetchPriceHistoryForRange({
-    symbol: targetInstr.symbol,
-    range: "1Y",
-    db: database,
-    now,
-  });
-
   const [
+    initialHistory,
     portfolios,
     { buckets, baseCurrency, latestCachedUsdSgd },
     transactions,
     allActions,
     quotesMap,
     fundamentals,
-    liveFx,
+    fetchedLiveFx,
   ] = await Promise.all([
+    fetchPriceHistoryForRange({
+      symbol: targetInstr.symbol,
+      range: "1Y",
+      db: database,
+      now,
+    }),
     listPortfolios(database),
     loadSerializedFifoBuckets({
       instrumentId: targetInstr.id,
@@ -457,22 +541,45 @@ export async function getStockDetailSnapshot(
       now,
       includeSparklines: true,
     }),
-    fetchInstrumentFundamentals(targetInstr.symbol, { now }),
-    fetchExchangeRateToSgd({ from: "USD", now }).catch((): ExchangeRateSnapshot | null =>
-      latestCachedUsdSgd
-        ? {
-            from: "USD",
-            to: "SGD",
-            rate: toDecimalString(toDecimal(latestCachedUsdSgd), 6),
-            effectiveDate: initialMarket.sgtDate,
-            asOf: now.toISOString(),
-            source: "frankfurter",
-            label: "Cached FX rate",
-            isHistorical: false,
-          }
-        : null,
-    ),
+    targetInstr.assetType === "crypto" ||
+    targetInstr.isDelisted ||
+    Boolean(targetInstr.priceNotFoundAt)
+      ? Promise.resolve({
+          symbol: targetInstr.symbol,
+          name: targetInstr.name,
+          currency: targetInstr.currency,
+          exchangeName: targetInstr.exchangeCode,
+          marketCap: null,
+          peTrailing: null,
+          dividendYieldPercent: null,
+          fiftyTwoWeekHigh: null,
+          fiftyTwoWeekLow: null,
+          beta: null,
+          averageVolume: null,
+          sector: null,
+          industry: null,
+          status: "unavailable" as const,
+          asOf: now.toISOString(),
+          source: null,
+        })
+      : fetchInstrumentFundamentals(targetInstr.symbol, { now }),
+    fetchExchangeRateToSgd({ from: "USD", now }).catch(() => null),
   ]);
+
+  const liveFx: ExchangeRateSnapshot | null =
+    fetchedLiveFx ??
+    (latestCachedUsdSgd
+      ? {
+          from: "USD",
+          to: "SGD",
+          rate: toDecimalString(toDecimal(latestCachedUsdSgd), 6),
+          effectiveDate: initialMarket.sgtDate,
+          asOf: now.toISOString(),
+          source: "frankfurter",
+          label: "Cached FX rate",
+          isHistorical: false,
+        }
+      : null);
 
   const corporateActions = allActions.filter(
     (action) => action.instrumentId === targetInstr.id,
@@ -490,6 +597,8 @@ export async function getStockDetailSnapshot(
         ? toDecimalString(toDecimal(targetInstr.manualPrice), 10)
         : null,
       isDelisted: targetInstr.isDelisted,
+      priceNotFound: Boolean(targetInstr.priceNotFoundAt),
+      priceNotFoundReason: targetInstr.priceNotFoundReason ?? null,
     },
     portfolios,
     buckets,

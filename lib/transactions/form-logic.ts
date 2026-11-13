@@ -90,6 +90,19 @@ export interface ExistingTransactionStockSnapshot {
   isManualFxRate?: boolean;
 }
 
+/**
+ * Strips leading Yahoo/MSP index caret markers (`^DJI` -> `DJI`) for clean
+ * Apple-style display while preserving the canonical database symbol for links
+ * and market-data lookups.
+ */
+export function formatSymbolForDisplay(symbol: string): string {
+  const trimmed = symbol.trim();
+  if (trimmed.startsWith("^")) {
+    return trimmed.slice(1);
+  }
+  return trimmed;
+}
+
 export function formatExchangeCodeForDisplay(
   exchangeCode: string | null | undefined,
 ): string {
@@ -111,6 +124,14 @@ export function formatExchangeCodeForDisplay(
   }
   if (normalized === "ASE") {
     return "NYSE American";
+  }
+  if (
+    normalized === "DJI" ||
+    normalized === "SNP" ||
+    normalized === "NIM" ||
+    normalized === "INDEX"
+  ) {
+    return "INDEX";
   }
   return normalized;
 }

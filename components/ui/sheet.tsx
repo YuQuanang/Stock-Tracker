@@ -36,13 +36,18 @@ export function Sheet({
     if (!isOpen) {
       return;
     }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape" && !event.defaultPrevented) {
         onClose();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isOpen, onClose]);
 
   return (
@@ -70,9 +75,9 @@ export function Sheet({
                 onClose();
               }
             }}
-            initial={{ opacity: 0, y: 44, scale: 0.985 }}
+            initial={{ opacity: 0, y: 24, scale: 0.99 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 32, scale: 0.985 }}
+            exit={{ opacity: 0, y: 18, scale: 0.99 }}
             transition={springSmooth}
             onMouseDown={(event) => event.stopPropagation()}
             className={`material flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[26px] border border-line bg-surface shadow-raised sm:max-h-[88dvh] sm:rounded-[22px] ${maxWidthClass}`}

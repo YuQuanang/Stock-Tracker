@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Holdings" };
 
 export default async function HoldingsPage() {
   await connection();
-  const snapshot = await getHoldingsPageSnapshot();
+  const snapshot = await getHoldingsPageSnapshot({ cacheOnly: true });
 
   return (
     <>

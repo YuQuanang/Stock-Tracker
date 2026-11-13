@@ -32,6 +32,7 @@ import {
 } from "@/components/charts/trade-markers-primitive";
 import { Card } from "@/components/ui/card";
 import { GainBadge } from "@/components/ui/gain-badge";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatMoney, formatQuantity } from "@/lib/format";
 import type {
@@ -640,34 +641,21 @@ export function InteractivePriceChart({
           )}
         </div>
 
-        {/* Apple-style compact range bar */}
-        <div
-          role="group"
-          aria-label="Chart time range"
-          className="inline-flex shrink-0 flex-wrap items-center gap-1 rounded-[11px] bg-surface-2 p-1"
-        >
-          {RANGE_OPTIONS.map((range) => {
-            const active = selectedRange === range;
-            return (
-              <button
-                key={range}
-                type="button"
-                onClick={() => {
-                  setScrubPoint(null);
-                  setSelectedRange(range);
-                }}
-                aria-pressed={active}
-                className={`num rounded-[8px] px-2.5 py-1 text-[12px] font-semibold transition-colors ${
-                  active
-                    ? "bg-surface text-ink shadow-xs"
-                    : "text-ink-3 hover:text-ink"
-                }`}
-              >
-                {range}
-              </button>
-            );
-          })}
-        </div>
+        {/* Apple-style compact animated range bar */}
+        <SegmentedControl
+          ariaLabel="Chart time range"
+          size="sm"
+          options={RANGE_OPTIONS.map((opt) => ({
+            value: opt,
+            label: opt,
+          }))}
+          value={selectedRange}
+          onChange={(nextRange) => {
+            setScrubPoint(null);
+            setSelectedRange(nextRange);
+          }}
+          layoutId="stock-detail-range-seg"
+        />
       </div>
 
       {/* Chart Canvas Area */}
