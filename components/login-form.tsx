@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -14,7 +13,6 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ nextPath }: LoginFormProps) {
-  const router = useRouter();
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,12 +26,14 @@ export function LoginForm({ nextPath }: LoginFormProps) {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ password }),
       });
 
       if (response.ok) {
-        router.replace(nextPath);
-        router.refresh();
+        // Full document navigation guarantees the new session cookie is sent cleanly
+        // past any proxy/CDN caches without a stale /login RSC payload bouncing back.
+        window.location.assign(nextPath);
         return;
       }
 

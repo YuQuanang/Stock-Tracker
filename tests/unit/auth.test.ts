@@ -7,9 +7,12 @@ vi.hoisted(() => {
   process.env.SESSION_SECRET = "0123456789abcdef0123456789abcdef-test-secret";
 });
 
+import { NextRequest } from "next/server";
 import { hashPassword, verifyPasswordHash, constantTimeStringEqual } from "@/lib/auth/password";
 import { createSessionToken, verifySessionToken, SESSION_DURATION_SECONDS } from "@/lib/auth/session";
 import { getSafeNextPath } from "@/lib/auth/safe-next";
+import { sanitizeTrimmedEnvValue } from "@/lib/env";
+import { isSameOriginRequest } from "@/proxy";
 
 describe("password hashing", () => {
   it("accepts the right password and rejects a wrong one", async () => {
@@ -91,6 +94,57 @@ describe("getSafeNextPath", () => {
     expect(getSafeNextPath(null)).toBe("/dashboard");
     expect(getSafeNextPath(undefined)).toBe("/dashboard");
     expect(getSafeNextPath("/login")).toBe("/dashboard");
+  });
+});
+
+describe("isSameOriginRequest and env sanitization", () => {
+  it("accepts matching hosts behind Netlify forwarded headers", () => {
+    const netlifyRequest = new NextRequest("https://internal.lambda/api/auth/login", {
+      method: "POST",
+      headers: {
+        origin: "https://kestrel-demo.netlify.app",
+        "x-forwarded-host": "kestrel-demo.netlify.app:443, edge-node",
+        host: "internal.lambda",
+      },
+    });
+    expect(isSameOriginRequest(netlifyRequest)).toBe(true);
+
+    const emptyForwardedRequest = new NextRequest("https://kestrel-demo.netlify.app/api/auth/login", {
+      method: "POST",
+      headers: {
+        origin: "https://kestrel-demo.netlify.app",
+        "x-forwarded-host": "",
+        host: "kestrel-demo.netlify.app",
+      },
+    });
+    expect(isSameOriginRequest(emptyForwardedRequest)).toBe(true);
+  });
+
+  it("blocks cross-site or originless POST requests", () => {
+    const evilRequest = new NextRequest("https://kestrel-demo.netlify.app/api/auth/login", {
+      method: "POST",
+      headers: {
+        origin: "https://evil.example",
+        host: "kestrel-demo.netlify.app",
+      },
+    });
+    expect(isSameOriginRequest(evilRequest)).toBe(false);
+
+    const noOriginRequest = new NextRequest("https://kestrel-demo.netlify.app/api/auth/login", {
+      method: "POST",
+      headers: { host: "kestrel-demo.netlify.app" },
+    });
+    expect(isSameOriginRequest(noOriginRequest)).toBe(false);
+  });
+
+  it("trims whitespace and surrounding quotes from pasted env variables", () => {
+    expect(sanitizeTrimmedEnvValue('  "postgresql://user:pass@host/db"  ')).toBe(
+      "postgresql://user:pass@host/db",
+    );
+    expect(sanitizeTrimmedEnvValue("  my-session-secret-0123456789abcdef012345  ")).toBe(
+      "my-session-secret-0123456789abcdef012345",
+    );
+    expect(sanitizeTrimmedEnvValue("   ")).toBeUndefined();
   });
 });
 

@@ -35,7 +35,23 @@ export async function POST(request: NextRequest) {
 
   const clientKey = getClientKey(request);
 
-  const decision = await checkLoginAllowed(clientKey);
+  let decision;
+  try {
+    decision = await checkLoginAllowed(clientKey);
+  } catch (error) {
+    console.error(
+      "Login rate-limit check failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return NextResponse.json(
+      {
+        error:
+          "Unable to reach the database. Check DATABASE_URL in your hosting environment variables and redeploy.",
+      },
+      { status: 503 },
+    );
+  }
+
   if (!decision.allowed) {
     const minutes = Math.ceil(decision.retryAfterSeconds / 60);
     return NextResponse.json(
@@ -48,8 +64,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const passwordIsCorrect = await verifyAppPassword(body.data.password);
-  await recordLoginAttempt(clientKey, passwordIsCorrect);
+  let passwordIsCorrect: boolean;
+  try {
+    passwordIsCorrect = await verifyAppPassword(body.data.password);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Authentication configuration error.";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
+
+  try {
+    await recordLoginAttempt(clientKey, passwordIsCorrect);
+  } catch (error) {
+    console.error(
+      "Failed to record login attempt:",
+      error instanceof Error ? error.message : error,
+    );
+  }
 
   if (!passwordIsCorrect) {
     return NextResponse.json({ error: "That password is incorrect." }, { status: 401 });

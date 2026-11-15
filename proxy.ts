@@ -15,7 +15,18 @@ import { getSessionCookieName, verifySessionToken } from "@/lib/auth/session";
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function isSameOriginRequest(request: NextRequest): boolean {
+function normalizeHostHeader(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  const first = value.split(",")[0]?.trim().toLowerCase() ?? "";
+  if (first === "") {
+    return null;
+  }
+  return first.replace(/:(80|443)$/, "");
+}
+
+export function isSameOriginRequest(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
   if (origin === null) {
     // Browsers always send Origin on cross-site POSTs. A missing Origin on a
@@ -23,17 +34,20 @@ function isSameOriginRequest(request: NextRequest): boolean {
     return false;
   }
 
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const host = forwardedHost ?? request.headers.get("host");
-  if (host === null) {
-    return false;
-  }
-
+  let originHost: string;
   try {
-    return new URL(origin).host === host;
+    originHost = new URL(origin).host.toLowerCase().replace(/:(80|443)$/, "");
   } catch {
     return false;
   }
+
+  const candidateHosts = [
+    normalizeHostHeader(request.headers.get("x-forwarded-host")),
+    normalizeHostHeader(request.headers.get("host")),
+    normalizeHostHeader(request.nextUrl.host),
+  ].filter((candidate): candidate is string => candidate !== null);
+
+  return candidateHosts.includes(originHost);
 }
 
 export function proxy(request: NextRequest) {
