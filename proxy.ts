@@ -78,8 +78,14 @@ export function proxy(request: NextRequest) {
 
   if (PUBLIC_PATHS.has(pathname)) {
     // A signed-in user opening /login goes straight to the app.
-    if (pathname === "/login" && hasValidSession) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (pathname === "/login") {
+      if (hasValidSession) {
+        return redirectWithoutCache(request, new URL("/dashboard", request.url));
+      }
+      const response = NextResponse.next();
+      response.headers.set("Cache-Control", "no-store, private");
+      response.headers.set("Vary", "Cookie");
+      return response;
     }
     return NextResponse.next();
   }
@@ -96,7 +102,28 @@ export function proxy(request: NextRequest) {
   if (pathname !== "/") {
     loginUrl.searchParams.set("next", pathname + request.nextUrl.search);
   }
-  return NextResponse.redirect(loginUrl);
+  return redirectWithoutCache(request, loginUrl);
+}
+
+/**
+ * Returns an uncacheable redirect locked to HTTPS when forwarded over TLS so
+ * edge CDNs (like Netlify) never serve stale auth redirects across sessions.
+ */
+function redirectWithoutCache(request: NextRequest, url: URL): NextResponse {
+  const forwardedProto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim()
+    .toLowerCase();
+  if (forwardedProto === "https" && url.protocol === "http:") {
+    url.protocol = "https:";
+  }
+  const response = NextResponse.redirect(url);
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("x-middleware-cache", "no-cache");
+  response.headers.set("Vary", "Cookie");
+  return response;
 }
 
 export const config = {

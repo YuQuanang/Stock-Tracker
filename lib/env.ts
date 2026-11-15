@@ -120,7 +120,14 @@ export function getEnv(): ServerEnv {
     return cachedEnv;
   }
 
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = envSchema.safeParse({
+    NODE_ENV: process.env.NODE_ENV,
+    DATABASE_URL: process.env.DATABASE_URL,
+    APP_PASSWORD_HASH: process.env.APP_PASSWORD_HASH,
+    APP_PASSWORD: process.env.APP_PASSWORD,
+    SESSION_SECRET: process.env.SESSION_SECRET,
+    FINNHUB_API_KEY: process.env.FINNHUB_API_KEY,
+  });
 
   if (!parsed.success) {
     const problems = parsed.error.issues

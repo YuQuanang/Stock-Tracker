@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
-import { THEME_INIT_SCRIPT } from "@/lib/theme";
+import { ThemeInitScript } from "@/components/theme-init-script";
 import "./globals.css";
 
 const inter = Inter({
@@ -53,10 +53,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${inter.variable} ${jetbrainsMono.variable}`}
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-      </head>
-      <body className="min-h-dvh antialiased">
+      <body suppressHydrationWarning className="min-h-dvh antialiased">
+        <ThemeInitScript />
         <Providers>{children}</Providers>
       </body>
     </html>
