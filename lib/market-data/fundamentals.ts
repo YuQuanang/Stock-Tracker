@@ -19,6 +19,7 @@ import { toDecimal, toDecimalString } from "@/lib/finance/decimal";
 import { TtlCache } from "@/lib/market-data/cache";
 import { fetchProviderJson, MarketDataError } from "@/lib/market-data/errors";
 import { inferMarketRegion } from "@/lib/market-data/hours";
+import { fetchFundamentalsViaTradingViewSgx } from "@/lib/market-data/tradingview";
 import { inferInstrumentMetadata } from "@/lib/symbols";
 
 export interface InstrumentFundamentals {
@@ -312,6 +313,51 @@ export async function fetchInstrumentFundamentals(
       }
     }
 
+    // 3. TradingView Singapore enrichment for `.SI` equities, REITs, ETFs & SDRs
+    if (region === "SG" && symbol.toUpperCase().endsWith(".SI")) {
+      const tv = await fetchFundamentalsViaTradingViewSgx(
+        symbol,
+        options.fetchImpl,
+      );
+      if (tv) {
+        sourcesUsed.push("tradingview");
+        if (!name && tv.name) {
+          name = tv.name;
+        }
+        if (tv.currency) {
+          currency = tv.currency;
+        }
+        exchangeName = exchangeName ?? "SES";
+        if (!marketCap && tv.marketCap) {
+          marketCap = tv.marketCap;
+        }
+        if (!peTrailing && tv.peTrailing) {
+          peTrailing = tv.peTrailing;
+        }
+        if (!dividendYieldPercent && tv.dividendYieldPercent) {
+          dividendYieldPercent = tv.dividendYieldPercent;
+        }
+        if (!fiftyTwoWeekHigh && tv.fiftyTwoWeekHigh) {
+          fiftyTwoWeekHigh = tv.fiftyTwoWeekHigh;
+        }
+        if (!fiftyTwoWeekLow && tv.fiftyTwoWeekLow) {
+          fiftyTwoWeekLow = tv.fiftyTwoWeekLow;
+        }
+        if (!beta && tv.beta) {
+          beta = tv.beta;
+        }
+        if (!averageVolume && tv.averageVolume) {
+          averageVolume = tv.averageVolume;
+        }
+        if (!sector && tv.sector) {
+          sector = tv.sector;
+        }
+        if (!industry && tv.industry) {
+          industry = tv.industry;
+        }
+      }
+    }
+
     if (sourcesUsed.length === 0) {
       return {
         symbol,
@@ -356,6 +402,13 @@ export async function fetchInstrumentFundamentals(
   return options.skipCache
     ? execute()
     : fundamentalsCache.getOrFetch(cacheKey, FUNDAMENTALS_TTL_MS, execute);
+}
+
+export function clearFundamentalsCacheForSymbol(rawSymbol: string): void {
+  const clean = rawSymbol.trim().toUpperCase();
+  if (clean) {
+    fundamentalsCache.delete(clean);
+  }
 }
 
 export function clearFundamentalsCache(): void {

@@ -28,6 +28,8 @@ export type PeriodReturnKey =
   | "6M"
   | "YTD"
   | "1Y"
+  | "3Y"
+  | "5Y"
   | "ALL";
 
 export interface TwrDailyInput {
@@ -266,7 +268,7 @@ function addCalendarOffset(
 
 /**
  * Computes percentage returns over standard horizons (`1D`, `1W`, `1M`, `3M`,
- * `6M`, `YTD`, `1Y`, `ALL`) from any monotonic cumulative index/price series.
+ * `6M`, `YTD`, `1Y`, `3Y`, `5Y`, `ALL`) from any monotonic cumulative index/price series.
  *
  * Formula in words:
  *   `return(H) = ((index_end / index_anchor) - 1) * 100`
@@ -276,6 +278,7 @@ function addCalendarOffset(
 export function computeHorizonReturns(
   series: readonly { date: string; value: DecimalInput }[],
   asOfDate?: string,
+  options?: { allBaseValue?: DecimalInput },
 ): Record<PeriodReturnKey, DecimalValue | null> {
   const sorted = [...series]
     .filter((pt) => toDecimal(pt.value).gt(ZERO))
@@ -289,6 +292,8 @@ export function computeHorizonReturns(
     "6M": null,
     YTD: null,
     "1Y": null,
+    "3Y": null,
+    "5Y": null,
     ALL: null,
   };
 
@@ -359,6 +364,12 @@ export function computeHorizonReturns(
     "6M": resolveHorizon(addCalendarOffset(endDate, { months: -6 })),
     YTD: pctFromAnchor(ytdAnchor),
     "1Y": resolveHorizon(addCalendarOffset(endDate, { years: -1 })),
-    ALL: pctFromAnchor(sorted[0]),
+    "3Y": resolveHorizon(addCalendarOffset(endDate, { years: -3 })),
+    "5Y": resolveHorizon(addCalendarOffset(endDate, { years: -5 })),
+    ALL: pctFromAnchor(
+      options?.allBaseValue !== undefined
+        ? { value: options.allBaseValue }
+        : sorted[0],
+    ),
   };
 }

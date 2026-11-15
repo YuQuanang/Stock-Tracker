@@ -44,10 +44,12 @@ import {
   fetchInstrumentFundamentals,
   fetchPriceHistoryForRange,
   getCombinedMarketOverview,
+  getSingaporeDateString,
   type InstrumentFundamentals,
   type PriceHistoryResult,
   type ResolvedInstrumentQuote,
   resolveQuotesForSymbols,
+  resolveStartDateForRange,
 } from "@/lib/market-data";
 import { backfillMissingTransactionSgdTotals } from "@/lib/services/fx-sgd";
 import {
@@ -513,7 +515,7 @@ export async function getStockDetailSnapshot(
   const initialMarket = getCombinedMarketOverview(now);
 
   const [
-    initialHistory,
+    historyFiveYear,
     portfolios,
     { buckets, baseCurrency, latestCachedUsdSgd },
     transactions,
@@ -524,7 +526,7 @@ export async function getStockDetailSnapshot(
   ] = await Promise.all([
     fetchPriceHistoryForRange({
       symbol: targetInstr.symbol,
-      range: "1Y",
+      range: "5Y",
       db: database,
       now,
     }),
@@ -584,6 +586,17 @@ export async function getStockDetailSnapshot(
   const corporateActions = allActions.filter(
     (action) => action.instrumentId === targetInstr.id,
   );
+
+  const oneYearStart = resolveStartDateForRange("1Y", getSingaporeDateString(now));
+  const slicedOneYearBars = historyFiveYear.bars.filter(
+    (bar) => bar.date >= oneYearStart,
+  );
+  const initialHistory: PriceHistoryResult = {
+    ...historyFiveYear,
+    range: "1Y",
+    bars:
+      slicedOneYearBars.length > 0 ? slicedOneYearBars : historyFiveYear.bars,
+  };
 
   return {
     instrument: {

@@ -22,6 +22,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   computeReturnSpread,
   PRESET_BENCHMARKS,
@@ -64,8 +65,16 @@ const PERIOD_COLUMNS: readonly PeriodReturnKey[] = [
   "6M",
   "YTD",
   "1Y",
+  "3Y",
+  "5Y",
   "ALL",
 ];
+
+function periodMetricCellClass(isLast: boolean): string {
+  return isLast
+    ? "num whitespace-nowrap py-3 pl-1 pr-4 text-right xl:pl-1.5"
+    : "num whitespace-nowrap px-1 py-3 text-right xl:px-1.5";
+}
 
 /**
  * Benchmarks & Portfolio Risk Analytics view (`/benchmarks`).
@@ -366,10 +375,10 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                   portfolioId: e.target.value,
                   currency: selectedCurrency,
                   benchmarksList: allTracked,
-                  cacheOnly: true,
+                  cacheOnly: e.target.value === selectedPortfolioId,
                 });
               }}
-              className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px] font-medium shadow-xs"
+              className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px] font-medium"
             >
               <option value="all">
                 All Portfolios ({snapshot.portfolios.length})
@@ -381,8 +390,8 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               ))}
             </select>
             <ChevronDown
-              size={14}
-              className="pointer-events-none absolute right-2.5 text-ink-3"
+              size={16}
+              className="pointer-events-none absolute right-2.5 text-ink-2"
               aria-hidden="true"
             />
           </div>
@@ -411,15 +420,15 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
           />
         </div>
 
-        <p className="rounded-full border border-line bg-surface px-3.5 py-1 text-[12px] text-ink-2">
-          Compared in <strong>{currency}</strong> (indices FX-converted daily)
+        <p className="text-[12.5px] text-ink-2">
+          Compared in <strong className="font-semibold text-ink">{currency}</strong> · indices FX-converted daily
         </p>
       </div>
 
       {errorMsg && (
         <div
           role="alert"
-          className="rounded-[12px] border border-loss/30 bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
+          className="rounded-[10px] border border-loss/30 bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
         >
           {errorMsg}
         </div>
@@ -430,7 +439,126 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
           isLoading ? "opacity-65" : "opacity-100"
         }`}
       >
-        {/* Benchmark Selector Chips + Custom Search */}
+        {/* Comprehensive Risk & CAPM Metrics Grid */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-2">
+                Time-Weighted Returns
+              </p>
+              <MetricTooltip
+                label="Annualized & Cumulative TWR"
+                explanation="Measures pure investment skill across time without distortion from when you deposited or withdrew cash."
+              />
+            </div>
+            <dl className="mt-2.5 divide-y divide-line">
+              <div className="flex items-center justify-between gap-2 pb-1.5">
+                <dt className="text-[12px] font-medium text-ink-2">Annualized</dt>
+                <dd>
+                  <GainBadge
+                    percent={performance.annualizedTwrPercent}
+                    size="lg"
+                  />
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-2 pt-1.5">
+                <dt className="text-[12px] font-medium text-ink-2">Cumulative</dt>
+                <dd>
+                  <GainBadge
+                    percent={performance.cumulativeTwrPercent}
+                    size="lg"
+                  />
+                </dd>
+              </div>
+            </dl>
+          </Card>
+
+          <Card className="p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-2">
+                Personal Return (XIRR)
+              </p>
+              <MetricTooltip
+                label="XIRR"
+                explanation="Your exact annualized money-weighted return accounting for every deposit, withdrawal, and cash dividend date."
+              />
+            </div>
+            <div className="mt-2">
+              <GainBadge percent={performance.xirrPercent} size="lg" />
+            </div>
+            <p className="num mt-2.5 text-[12px] text-ink-2">
+              Closed trades:{" "}
+              <span className="font-medium text-ink">
+                {performance.winningTradeCount}/{performance.closedTradeCount}
+                {performance.winRatePercent
+                  ? ` (${performance.winRatePercent}%)`
+                  : ""}
+              </span>
+            </p>
+          </Card>
+
+          <Card className="p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-2">
+                Volatility &amp; Sharpe Ratio
+              </p>
+              <MetricTooltip
+                label="Sharpe Ratio"
+                explanation="Excess annualized return over the risk-free rate divided by annualized return volatility (higher = better risk-adjusted return)."
+              />
+            </div>
+            <p className="num mt-1.5 text-[22px] font-semibold tracking-tight text-ink">
+              {performance.sharpeRatio ?? "—"}
+            </p>
+            <p className="num mt-1.5 text-[12px] text-ink-2">
+              Ann. vol{" "}
+              <span className="font-medium text-ink">
+                {performance.volatilityPercent
+                  ? `${performance.volatilityPercent}%`
+                  : "—"}
+              </span>
+              {" · "}
+              Rf {snapshot.scope.riskFreeRatePercent}%
+            </p>
+          </Card>
+
+          <Card className="p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[12.5px] font-medium text-ink-2">
+                vs{" "}
+                <span className="font-mono">
+                  {primaryBenchmark?.displaySymbol ?? "Benchmark"}
+                </span>
+              </p>
+              <MetricTooltip
+                label="Beta, Alpha & Correlation"
+                explanation="Beta measures market sensitivity (1.0 moves with the index). Alpha is excess annualized return after adjusting for Beta."
+              />
+            </div>
+            <p className="num mt-1.5 text-[22px] font-semibold tracking-tight text-ink">
+              {primaryBenchmark?.betaVsPortfolio !== null &&
+              primaryBenchmark?.betaVsPortfolio !== undefined
+                ? `β ${primaryBenchmark.betaVsPortfolio}`
+                : "—"}
+            </p>
+            <p className="num mt-1.5 text-[12px] text-ink-2">
+              α{" "}
+              <span className="font-medium text-ink">
+                {primaryBenchmark?.alphaPercentVsPortfolio
+                  ? formatPercent(primaryBenchmark.alphaPercentVsPortfolio, {
+                      signed: true,
+                    })
+                  : "—"}
+              </span>
+              {" · "}r{" "}
+              <span className="font-medium text-ink">
+                {primaryBenchmark?.correlationVsPortfolio ?? "—"}
+              </span>
+            </p>
+          </Card>
+        </div>
+
+        {/* Benchmark Selector Buttons + Custom Search */}
         <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -450,10 +578,10 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                   type="button"
                   aria-pressed={active}
                   onClick={() => handleToggleBenchmark(preset.symbol)}
-                  className={`inline-flex h-8.5 items-center gap-2 rounded-full border px-3 text-[13px] font-medium transition-colors ${
+                  className={`inline-flex h-8.5 cursor-pointer items-center gap-2 rounded-[10px] border px-3 text-[13px] font-medium transition-colors ${
                     active
-                      ? "border-accent/40 bg-accent/10 text-ink"
-                      : "border-line bg-surface-2/70 text-ink-2 hover:text-ink"
+                      ? "border-accent/50 bg-accent/12 text-ink"
+                      : "border-line bg-surface-2 text-ink-2 hover:text-ink"
                   }`}
                 >
                   {active ? (
@@ -462,10 +590,10 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                       style={{ backgroundColor: color }}
                     />
                   ) : (
-                    <Check className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />
+                    <Check className="h-3.5 w-3.5 opacity-45" aria-hidden="true" />
                   )}
                   <span>{preset.label}</span>
-                  <span className="text-[11px] text-ink-3">
+                  <span className="font-mono text-[11px] text-ink-3">
                     {formatSymbolForDisplay(preset.symbol)}
                   </span>
                 </button>
@@ -484,16 +612,16 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               return (
                 <span
                   key={sym}
-                  className={`inline-flex h-8.5 items-center gap-1 rounded-full border pl-3 pr-1.5 text-[13px] font-medium ${
+                  className={`inline-flex h-8.5 items-center gap-1 rounded-[10px] border pl-3 pr-1.5 text-[13px] font-medium ${
                     active
-                      ? "border-accent/40 bg-accent/10 text-ink"
-                      : "border-line bg-surface-2/70 text-ink-2"
+                      ? "border-accent/50 bg-accent/12 text-ink"
+                      : "border-line bg-surface-2 text-ink-2"
                   }`}
                 >
                   <button
                     type="button"
                     onClick={() => handleToggleBenchmark(sym)}
-                    className="inline-flex items-center gap-1.5"
+                    className="inline-flex cursor-pointer items-center gap-1.5"
                   >
                     {active && (
                       <span
@@ -501,13 +629,15 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                         style={{ backgroundColor: color }}
                       />
                     )}
-                    <span>{formatSymbolForDisplay(sym)}</span>
+                    <span className="font-mono">
+                      {formatSymbolForDisplay(sym)}
+                    </span>
                   </button>
                   <button
                     type="button"
                     aria-label={`Remove ${formatSymbolForDisplay(sym)}`}
                     onClick={() => handleRemoveCustom(sym)}
-                    className="rounded-full p-0.5 text-ink-3 hover:bg-surface hover:text-ink"
+                    className="cursor-pointer rounded-[6px] p-0.5 text-ink-2 hover:bg-surface hover:text-ink"
                   >
                     <X className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
@@ -516,10 +646,10 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
             })}
           </div>
 
-          {/* Search box with spacious `pl-9` padding so icon never collides with placeholder */}
+          {/* Search box */}
           <div className="relative w-full sm:w-72">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-2"
               aria-hidden="true"
             />
             <input
@@ -541,16 +671,21 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               }}
               placeholder="Add ETF or ticker (SPY, ES3.SI)…"
               aria-label="Add custom benchmark ticker"
-              className="h-9.5 w-full rounded-[10px] border border-line bg-field-bg pl-9 pr-3 text-[13px] text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
+              className="field-input h-9.5 pl-9 pr-3 text-[13px]"
             />
 
             {searchQuery.trim().length > 0 &&
               (searchResults.length > 0 || isSearching) && (
-                <div className="absolute right-0 top-full z-30 mt-1.5 w-full overflow-hidden rounded-[12px] border border-line bg-surface shadow-lg">
+                <div className="absolute right-0 top-full z-30 mt-1.5 w-full overflow-hidden rounded-[12px] border border-line bg-surface-2 shadow-raised">
                   {isSearching && searchResults.length === 0 ? (
-                    <p className="px-3.5 py-2.5 text-[12.5px] text-ink-3">
-                      Searching market symbols…
-                    </p>
+                    <div className="divide-y divide-line" aria-busy="true">
+                      {Array.from({ length: 2 }).map((_, idx) => (
+                        <div key={idx} className="space-y-1.5 px-3.5 py-2.5">
+                          <Skeleton className="h-3.5 w-20" />
+                          <Skeleton className="h-3 w-36" />
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <ul className="divide-y divide-line">
                       {searchResults.map((match) => (
@@ -560,17 +695,17 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                             onClick={() =>
                               handleAddCustomBenchmark(match.symbol)
                             }
-                            className="flex w-full items-center justify-between gap-2 px-3.5 py-2 text-left text-[12.5px] hover:bg-surface-2"
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 px-3.5 py-2 text-left text-[12.5px] hover:bg-surface"
                           >
                             <div className="min-w-0">
-                              <p className="font-semibold text-ink">
+                              <p className="font-mono font-semibold text-ink">
                                 {formatSymbolForDisplay(match.symbol)}
                               </p>
-                              <p className="truncate text-[11.5px] text-ink-3">
+                              <p className="truncate text-[12px] text-ink-2">
                                 {match.name}
                               </p>
                             </div>
-                            <span className="shrink-0 text-[11px] font-medium text-accent">
+                            <span className="shrink-0 text-[12px] font-medium text-accent">
                               Add
                             </span>
                           </button>
@@ -585,7 +720,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
       </Card>
 
       {/* Main Comparison Card: Rebased to 100 / Same Cash Flows / Period Returns */}
-      <Card className="p-4 sm:p-6 space-y-4">
+      <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SegmentedControl
             ariaLabel="Benchmark comparison view mode"
@@ -597,7 +732,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
 
           {activeBenchmarkObjects.length > 0 && (
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[12.5px]">
-              <label htmlFor="primary-benchmark-select" className="text-ink-3">
+              <label htmlFor="primary-benchmark-select" className="text-ink-2">
                 Focus index:
               </label>
               <div className="relative inline-flex min-w-0 max-w-full items-center">
@@ -614,8 +749,8 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                   ))}
                 </select>
                 <ChevronDown
-                  size={13}
-                  className="pointer-events-none absolute right-2 text-ink-3"
+                  size={14}
+                  className="pointer-events-none absolute right-2 text-ink-2"
                   aria-hidden="true"
                 />
               </div>
@@ -631,89 +766,122 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -2 }}
               transition={fadeQuick}
-              className="overflow-x-auto"
+              className="overflow-x-auto rounded-[12px] border border-line bg-surface-2"
             >
-              <table className="w-full min-w-[780px] border-collapse text-left text-[13px]">
+              <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-line text-[11.5px] font-semibold uppercase tracking-[0.04em] text-ink-3">
-                    <th className="py-2.5 pr-4">Series ({currency})</th>
-                    <th className="px-2.5 py-2.5 text-right">Ann. TWR</th>
-                    <th className="px-2.5 py-2.5 text-right">Cum. TWR</th>
-                    {PERIOD_COLUMNS.map((col) => (
-                      <th key={col} className="px-2.5 py-2.5 text-right">
+                  <tr className="border-b border-line whitespace-nowrap text-[12px] font-medium text-ink-2">
+                    <th className="py-2.5 pl-4 pr-2">Series ({currency})</th>
+                    <th className="px-1 py-2.5 text-right xl:px-1.5">Ann. TWR</th>
+                    {PERIOD_COLUMNS.map((col, idx) => (
+                      <th
+                        key={col}
+                        title={
+                          col === "ALL"
+                            ? "Cumulative return aligned to your portfolio start date"
+                            : undefined
+                        }
+                        className={
+                          idx === PERIOD_COLUMNS.length - 1
+                            ? "py-2.5 pl-1 pr-4 text-right xl:pl-1.5"
+                            : "px-1 py-2.5 text-right xl:px-1.5"
+                        }
+                      >
                         {col}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  <tr className="bg-accent/5">
-                    <td className="py-3 pr-4 font-semibold text-ink">
-                      Your Portfolio (TWR)
+                  <tr className="bg-accent/8">
+                    <td className="whitespace-nowrap py-3 pl-4 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent"
+                          aria-hidden="true"
+                        />
+                        <span className="font-semibold text-ink">
+                          Your Portfolio
+                        </span>
+                        <span className="font-mono text-[11px] text-ink-3">
+                          TWR
+                        </span>
+                      </div>
                     </td>
-                    <td className="num px-2.5 py-3 text-right">
-                      <GainBadge percent={performance.annualizedTwrPercent} size="sm" />
+                    <td className={periodMetricCellClass(false)}>
+                      <GainBadge percent={performance.annualizedTwrPercent} size="xs" />
                     </td>
-                    <td className="num px-2.5 py-3 text-right">
-                      <GainBadge percent={performance.cumulativeTwrPercent} size="sm" />
-                    </td>
-                    {PERIOD_COLUMNS.map((col) => {
+                    {PERIOD_COLUMNS.map((col, idx) => {
                       const val = performance.periodReturns[col];
                       return (
-                        <td key={col} className="num px-2.5 py-3 text-right">
+                        <td
+                          key={col}
+                          className={periodMetricCellClass(
+                            idx === PERIOD_COLUMNS.length - 1,
+                          )}
+                        >
                           {val !== null ? (
-                            <GainBadge percent={val} size="sm" />
+                            <GainBadge percent={val} size="xs" />
                           ) : (
-                            <span className="text-ink-3">—</span>
+                            <span className="text-[11.5px] text-ink-3">—</span>
                           )}
                         </td>
                       );
                     })}
                   </tr>
-                  {activeBenchmarkObjects.map((bench) => (
-                    <tr key={bench.symbol}>
-                      <td className="py-3 pr-4">
-                        <span className="font-medium text-ink">
-                          {resolveBenchmarkLabel(bench.symbol, bench.name)}
-                        </span>
-                        <span className="ml-1.5 text-[11.5px] text-ink-3">
-                          {bench.displaySymbol}
-                        </span>
-                      </td>
-                      <td className="num px-2.5 py-3 text-right">
-                        <GainBadge
-                          percent={
-                            bench.status === "ok"
-                              ? bench.annualizedReturnPercent
-                              : null
-                          }
-                          size="sm"
-                        />
-                      </td>
-                      <td className="num px-2.5 py-3 text-right">
-                        <GainBadge
-                          percent={
-                            bench.status === "ok"
-                              ? bench.cumulativeReturnPercent
-                              : null
-                          }
-                          size="sm"
-                        />
-                      </td>
-                      {PERIOD_COLUMNS.map((col) => {
-                        const val = bench.periodReturns[col];
-                        return (
-                          <td key={col} className="num px-2.5 py-3 text-right">
-                            {val !== null ? (
-                              <GainBadge percent={val} size="sm" />
-                            ) : (
-                              <span className="text-ink-3">—</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                  {activeBenchmarkObjects.map((bench, index) => {
+                    const color =
+                      SERIES_PALETTE[(index + 1) % (SERIES_PALETTE.length - 1)];
+                    return (
+                      <tr
+                        key={bench.symbol}
+                        className="transition-colors hover:bg-surface"
+                      >
+                        <td className="max-w-[175px] whitespace-nowrap py-3 pl-4 pr-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: color }}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate font-medium text-ink">
+                              {resolveBenchmarkLabel(bench.symbol, bench.name)}
+                            </span>
+                            <span className="shrink-0 font-mono text-[11px] text-ink-3">
+                              {bench.displaySymbol}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={periodMetricCellClass(false)}>
+                          <GainBadge
+                            percent={
+                              bench.status === "ok"
+                                ? bench.annualizedReturnPercent
+                                : null
+                            }
+                            size="xs"
+                          />
+                        </td>
+                        {PERIOD_COLUMNS.map((col, idx) => {
+                          const val = bench.periodReturns[col];
+                          return (
+                            <td
+                              key={col}
+                              className={periodMetricCellClass(
+                                idx === PERIOD_COLUMNS.length - 1,
+                              )}
+                            >
+                              {val !== null ? (
+                                <GainBadge percent={val} size="xs" />
+                              ) : (
+                                <span className="text-[11.5px] text-ink-3">—</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </motion.div>
@@ -738,11 +906,11 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
       </Card>
 
       {/* TWR Summary & Risk/Spread Detail Table */}
-      <Card className="p-4 sm:p-6 space-y-4">
+      <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <div className="flex items-center gap-1.5">
-              <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+              <h2 className="text-[18px] font-semibold tracking-tight text-ink">
                 TWR Breakdown vs Benchmarks
               </h2>
               <MetricTooltip
@@ -750,23 +918,31 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                 explanation="Annualized TWR (CAGR) and Cumulative TWR are computed over the exact same active date window and aligned in your selected currency. Positive spread means your portfolio outperformed the index."
               />
             </div>
-            <p className="mt-0.5 text-[12.5px] text-ink-3">
-              {snapshot.timeline.firstTransactionDate
-                ? `Aligned from ${snapshot.timeline.firstTransactionDate} through today`
-                : "Aligned across full active history"}{" "}
+            <p className="mt-0.5 text-[12.5px] text-ink-2">
+              {snapshot.timeline.firstTransactionDate ? (
+                <>
+                  Aligned from{" "}
+                  <span className="font-mono">
+                    {snapshot.timeline.firstTransactionDate}
+                  </span>{" "}
+                  through today
+                </>
+              ) : (
+                "Aligned across full active history"
+              )}{" "}
               · Annualized &amp; Cumulative TWR with excess spreads, volatility,
               drawdown &amp; CAPM risk in {currency}.
             </p>
           </div>
-          <span className="rounded-full border border-line bg-surface-2/70 px-3 py-0.5 text-[11.5px] font-medium text-ink-2">
+          <span className="text-[12px] font-medium text-ink-2">
             Aligned in {currency}
           </span>
         </div>
 
-        <div className="overflow-x-auto rounded-[12px] border border-line bg-surface-2/35">
-          <table className="w-full min-w-[780px] border-collapse text-left text-[13px]">
+        <div className="overflow-x-auto rounded-[12px] border border-line bg-surface-2">
+          <table className="w-full min-w-[780px] border-collapse text-left text-[13.5px]">
             <thead>
-              <tr className="border-b border-line text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+              <tr className="border-b border-line text-[12px] font-medium text-ink-2">
                 <th className="py-2.5 pl-4 pr-3">Series</th>
                 <th className="px-3 py-2.5 text-right">Annualized TWR</th>
                 <th className="px-3 py-2.5 text-right">Cumulative TWR</th>
@@ -777,8 +953,8 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                 <th className="py-2.5 pl-3 pr-4 text-right">Beta / α</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line/60">
-              <tr className="bg-accent/6">
+            <tbody className="divide-y divide-line">
+              <tr className="bg-accent/8">
                 <td className="py-3 pl-4 pr-3">
                   <div className="flex items-center gap-2">
                     <span
@@ -787,7 +963,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                     />
                     <div>
                       <p className="font-semibold text-ink">Your Portfolio</p>
-                      <p className="text-[11px] text-ink-3">
+                      <p className="text-[11.5px] text-ink-2">
                         {snapshot.scope.portfolioName} (TWR)
                       </p>
                     </div>
@@ -800,12 +976,12 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                   <GainBadge percent={performance.cumulativeTwrPercent} size="sm" />
                 </td>
                 <td className="px-3 py-3 text-right">
-                  <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                  <span className="inline-flex rounded-[6px] bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
                     Baseline
                   </span>
                 </td>
                 <td className="px-3 py-3 text-right">
-                  <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                  <span className="inline-flex rounded-[6px] bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
                     Baseline
                   </span>
                 </td>
@@ -846,7 +1022,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                 return (
                   <tr
                     key={bench.symbol}
-                    className="transition-colors hover:bg-surface-2/70"
+                    className="transition-colors hover:bg-surface"
                   >
                     <td className="py-3 pl-4 pr-3">
                       <div className="flex items-center gap-2">
@@ -859,7 +1035,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
                           <p className="font-medium text-ink">
                             {resolveBenchmarkLabel(bench.symbol, bench.name)}
                           </p>
-                          <p className="text-[11px] text-ink-3">
+                          <p className="font-mono text-[11.5px] text-ink-3">
                             {bench.displaySymbol} · {bench.nativeCurrency}
                           </p>
                         </div>
@@ -922,126 +1098,10 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
         </div>
       </Card>
 
-      {/* Comprehensive Risk & CAPM Metrics Grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-5">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[12.5px] font-medium text-ink-3">
-              Time-Weighted Returns
-            </p>
-            <MetricTooltip
-              label="Annualized & Cumulative TWR"
-              explanation="Measures pure investment skill across time without distortion from when you deposited or withdrew cash."
-            />
-          </div>
-          <dl className="mt-2.5 divide-y divide-line/60">
-            <div className="flex items-center justify-between gap-2 pb-1.5">
-              <dt className="text-[12px] font-medium text-ink-3">Annualized</dt>
-              <dd>
-                <GainBadge
-                  percent={performance.annualizedTwrPercent}
-                  size="lg"
-                />
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-2 pt-1.5">
-              <dt className="text-[12px] font-medium text-ink-3">Cumulative</dt>
-              <dd>
-                <GainBadge
-                  percent={performance.cumulativeTwrPercent}
-                  size="lg"
-                />
-              </dd>
-            </div>
-          </dl>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[12.5px] font-medium text-ink-3">
-              Personal Return (XIRR)
-            </p>
-            <MetricTooltip
-              label="XIRR"
-              explanation="Your exact annualized money-weighted return accounting for every deposit, withdrawal, and cash dividend date."
-            />
-          </div>
-          <div className="mt-2">
-            <GainBadge percent={performance.xirrPercent} size="lg" />
-          </div>
-          <p className="num mt-2.5 text-[12px] text-ink-3">
-            Closed trades:{" "}
-            <span className="font-medium text-ink-2">
-              {performance.winningTradeCount}/{performance.closedTradeCount}
-              {performance.winRatePercent
-                ? ` (${performance.winRatePercent}%)`
-                : ""}
-            </span>
-          </p>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[12.5px] font-medium text-ink-3">
-              Volatility &amp; Sharpe Ratio
-            </p>
-            <MetricTooltip
-              label="Sharpe Ratio"
-              explanation="Excess annualized return over the risk-free rate divided by annualized return volatility (higher = better risk-adjusted return)."
-            />
-          </div>
-          <p className="num mt-1.5 text-[22px] font-semibold tracking-[-0.02em] text-ink">
-            {performance.sharpeRatio ?? "—"}
-          </p>
-          <p className="num mt-1.5 text-[12px] text-ink-3">
-            Ann. vol{" "}
-            <span className="font-medium text-ink-2">
-              {performance.volatilityPercent
-                ? `${performance.volatilityPercent}%`
-                : "—"}
-            </span>
-            {" · "}
-            Rf {snapshot.scope.riskFreeRatePercent}%
-          </p>
-        </Card>
-
-        <Card className="p-5">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[12.5px] font-medium text-ink-3">
-              vs {primaryBenchmark?.displaySymbol ?? "Benchmark"}
-            </p>
-            <MetricTooltip
-              label="Beta, Alpha & Correlation"
-              explanation="Beta measures market sensitivity (1.0 moves with the index). Alpha is excess annualized return after adjusting for Beta."
-            />
-          </div>
-          <p className="num mt-1.5 text-[22px] font-semibold tracking-[-0.02em] text-ink">
-            {primaryBenchmark?.betaVsPortfolio !== null &&
-            primaryBenchmark?.betaVsPortfolio !== undefined
-              ? `β ${primaryBenchmark.betaVsPortfolio}`
-              : "—"}
-          </p>
-          <p className="num mt-1.5 text-[12px] text-ink-3">
-            α{" "}
-            <span className="font-medium text-ink-2">
-              {primaryBenchmark?.alphaPercentVsPortfolio
-                ? formatPercent(primaryBenchmark.alphaPercentVsPortfolio, {
-                    signed: true,
-                  })
-                : "—"}
-            </span>
-            {" · "}r{" "}
-            <span className="font-medium text-ink-2">
-              {primaryBenchmark?.correlationVsPortfolio ?? "—"}
-            </span>
-          </p>
-        </Card>
-      </div>
-
       {/* Best & Worst Days / Months */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card className="p-4">
-          <p className="text-[11.5px] font-medium text-ink-3">Best Day</p>
+          <p className="text-[12px] font-medium text-ink-2">Best Day</p>
           <div className="mt-1">
             {performance.bestDay ? (
               <GainBadge percent={performance.bestDay.percent} size="sm" />
@@ -1049,13 +1109,13 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               <span className="num text-ink-3">—</span>
             )}
           </div>
-          <p className="num mt-1 text-[11.5px] text-ink-3">
+          <p className="font-mono mt-1 text-[11.5px] text-ink-3">
             {performance.bestDay?.period ?? "—"}
           </p>
         </Card>
 
         <Card className="p-4">
-          <p className="text-[11.5px] font-medium text-ink-3">Worst Day</p>
+          <p className="text-[12px] font-medium text-ink-2">Worst Day</p>
           <div className="mt-1">
             {performance.worstDay ? (
               <GainBadge percent={performance.worstDay.percent} size="sm" />
@@ -1063,13 +1123,13 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               <span className="num text-ink-3">—</span>
             )}
           </div>
-          <p className="num mt-1 text-[11.5px] text-ink-3">
+          <p className="font-mono mt-1 text-[11.5px] text-ink-3">
             {performance.worstDay?.period ?? "—"}
           </p>
         </Card>
 
         <Card className="p-4">
-          <p className="text-[11.5px] font-medium text-ink-3">Best Month</p>
+          <p className="text-[12px] font-medium text-ink-2">Best Month</p>
           <div className="mt-1">
             {performance.bestMonth ? (
               <GainBadge percent={performance.bestMonth.percent} size="sm" />
@@ -1077,13 +1137,13 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               <span className="num text-ink-3">—</span>
             )}
           </div>
-          <p className="num mt-1 text-[11.5px] text-ink-3">
+          <p className="font-mono mt-1 text-[11.5px] text-ink-3">
             {performance.bestMonth?.period ?? "—"}
           </p>
         </Card>
 
         <Card className="p-4">
-          <p className="text-[11.5px] font-medium text-ink-3">Worst Month</p>
+          <p className="text-[12px] font-medium text-ink-2">Worst Month</p>
           <div className="mt-1">
             {performance.worstMonth ? (
               <GainBadge percent={performance.worstMonth.percent} size="sm" />
@@ -1091,17 +1151,17 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               <span className="num text-ink-3">—</span>
             )}
           </div>
-          <p className="num mt-1 text-[11.5px] text-ink-3">
+          <p className="font-mono mt-1 text-[11.5px] text-ink-3">
             {performance.worstMonth?.period ?? "—"}
           </p>
         </Card>
       </div>
 
       {/* Drawdown Underwater Chart */}
-      <Card className="p-4 sm:p-6 space-y-3">
+      <Card className="p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
-            <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+            <h2 className="text-[18px] font-semibold tracking-tight text-ink">
               Underwater Drawdowns
             </h2>
             <MetricTooltip
@@ -1109,7 +1169,7 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
               explanation="Shows percentage drops below each historical high-water mark until your portfolio reaches a new record high."
             />
           </div>
-          <span className="text-[12px] text-ink-3">
+          <span className="text-[12.5px] text-ink-2">
             Peak-to-trough declines in {currency} TWR
           </span>
         </div>

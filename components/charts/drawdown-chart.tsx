@@ -62,14 +62,14 @@ export function DrawdownChart({
       height: 220,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: palette.ink3,
-        fontFamily:
-          'ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+        textColor: palette.ink2,
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: palette.line },
+        horzLines: { color: palette.grid },
       },
       rightPriceScale: {
         borderVisible: false,
@@ -85,13 +85,13 @@ export function DrawdownChart({
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
         horzLine: {
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
       },
       handleScroll: false,
@@ -170,7 +170,7 @@ export function DrawdownChart({
 
   if (portfolioDrawdown.points.length < 2) {
     return (
-      <div className="flex h-48 items-center justify-center rounded-[14px] border border-dashed border-line bg-surface-2/40 text-center text-[13px] text-ink-3">
+      <div className="flex h-48 items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
         Not enough active valuation history to plot underwater drawdowns.
       </div>
     );
@@ -202,7 +202,7 @@ export function DrawdownChart({
               {hovered?.benchmark !== null && hovered?.benchmark !== undefined ? (
                 <span className="num">{formatPercent(hovered.benchmark)}</span>
               ) : benchmarkOverlay.maxDrawdownPercent ? (
-                <span className="num text-ink-3">
+                <span className="num text-ink-2">
                   max {formatPercent(benchmarkOverlay.maxDrawdownPercent)}
                 </span>
               ) : null}
@@ -210,24 +210,40 @@ export function DrawdownChart({
           )}
         </div>
 
-        <div className="num text-[12px] text-ink-3">
+        <div className="text-[12px] text-ink-2">
           {hovered ? (
-            <span>Date: {hovered.date}</span>
+            <span>
+              Date: <span className="font-mono">{hovered.date}</span>
+            </span>
           ) : (
             <span>
               Max{" "}
-              <strong className="font-semibold text-loss">
+              <strong className="num font-semibold text-loss">
                 {portfolioDrawdown.maxDrawdownPercent
                   ? formatPercent(portfolioDrawdown.maxDrawdownPercent)
                   : "0.00%"}
               </strong>
-              {portfolioDrawdown.peakDate && portfolioDrawdown.troughDate
-                ? ` · Peak ${portfolioDrawdown.peakDate} -> Trough ${portfolioDrawdown.troughDate} · ${
-                    portfolioDrawdown.recoveryDate
-                      ? `Recovered ${portfolioDrawdown.recoveryDate}`
-                      : "Not yet recovered"
-                  }`
-                : ""}
+              {portfolioDrawdown.peakDate && portfolioDrawdown.troughDate ? (
+                <>
+                  {" · Peak "}
+                  <span className="font-mono">{portfolioDrawdown.peakDate}</span>
+                  {" -> Trough "}
+                  <span className="font-mono">{portfolioDrawdown.troughDate}</span>
+                  {" · "}
+                  {portfolioDrawdown.recoveryDate ? (
+                    <>
+                      Recovered{" "}
+                      <span className="font-mono">
+                        {portfolioDrawdown.recoveryDate}
+                      </span>
+                    </>
+                  ) : (
+                    "Not yet recovered"
+                  )}
+                </>
+              ) : (
+                ""
+              )}
             </span>
           )}
         </div>

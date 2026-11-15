@@ -20,11 +20,11 @@ export default function MorePage() {
           <Link
             key={href}
             href={href}
-            className="flex h-14 items-center gap-4 px-5 text-[16px] transition-colors hover:bg-surface-2"
+            className="flex h-13 items-center gap-3.5 px-5 text-[14px] transition-colors hover:bg-surface-2"
           >
             <Icon size={20} strokeWidth={1.75} className="text-ink-2" aria-hidden="true" />
-            <span className="flex-1 font-medium">{label}</span>
-            <ChevronRight size={18} className="text-ink-3" aria-hidden="true" />
+            <span className="flex-1 font-medium text-ink">{label}</span>
+            <ChevronRight size={16} strokeWidth={1.75} className="text-ink-3" aria-hidden="true" />
           </Link>
         ))}
         <div className="px-2 py-1">

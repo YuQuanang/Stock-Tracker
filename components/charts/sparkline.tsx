@@ -1,29 +1,24 @@
 "use client";
 
-import { useId } from "react";
-
 interface SparklineProps {
   values: readonly (string | number)[];
   width?: number;
   height?: number;
+  tone?: "gain-loss" | "accent";
   className?: string;
 }
 
 /**
- * Lightweight custom SVG sparkline for holdings and watchlist rows.
- *
- * Uses CSS variables (`var(--gain)`, `var(--loss)`, `var(--ink-3)`) so it
- * automatically adapts to Light/Dark mode and Red-Up / Colour-Blind-Safe
- * schemes without JavaScript theme listeners.
+ * Crisp flat SVG sparkline for hero stats, holdings, and watchlist rows.
+ * Never renders gradient fills under data.
  */
 export function Sparkline({
   values,
   width = 88,
   height = 30,
+  tone = "gain-loss",
   className = "",
 }: SparklineProps) {
-  const gradientId = useId();
-
   const nums = values
     .map((v) => (typeof v === "number" ? v : Number(v)))
     .filter((n) => Number.isFinite(n));
@@ -71,24 +66,17 @@ export function Sparkline({
   const first = nums[0];
   const last = nums[nums.length - 1];
   const strokeColor =
-    last > first
-      ? "var(--gain)"
-      : last < first
-        ? "var(--loss)"
-        : "var(--ink-3)";
+    tone === "accent"
+      ? "var(--accent)"
+      : last > first
+        ? "var(--gain)"
+        : last < first
+          ? "var(--loss)"
+          : "var(--ink-2)";
 
   const polylinePoints = coords
     .map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`)
     .join(" ");
-
-  const firstPt = coords[0];
-  const lastPt = coords[coords.length - 1];
-  const areaPath = [
-    `M ${firstPt.x.toFixed(1)} ${height - 1}`,
-    ...coords.map((pt) => `L ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`),
-    `L ${lastPt.x.toFixed(1)} ${height - 1}`,
-    "Z",
-  ].join(" ");
 
   return (
     <svg
@@ -98,13 +86,6 @@ export function Sparkline({
       aria-hidden="true"
       className={`shrink-0 overflow-visible ${className}`}
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={strokeColor} stopOpacity={0.22} />
-          <stop offset="100%" stopColor={strokeColor} stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill={`url(#${gradientId})`} />
       <polyline
         fill="none"
         stroke={strokeColor}
@@ -116,4 +97,3 @@ export function Sparkline({
     </svg>
   );
 }
-

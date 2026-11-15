@@ -142,4 +142,42 @@ export function formatCompactMoney(
   }).format(numeric);
 }
 
+/**
+ * Compacts verbose quote freshness labels for dense table cells
+ * (e.g. `"Last close, 13 Nov"` -> `"13 Nov"`, `"Manual price"` -> `"Manual"`).
+ */
+export function formatCompactFreshness(
+  label: string | null | undefined,
+): string {
+  if (!label) {
+    return "—";
+  }
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return "—";
+  }
+  if (/^(Last close|Cached close),\s*/i.test(trimmed)) {
+    return trimmed.replace(/^(Last close|Cached close),\s*/i, "");
+  }
+  if (/^Close on\s+/i.test(trimmed)) {
+    return trimmed.replace(/^Close on\s+/i, "");
+  }
+  if (/^Delayed\b/i.test(trimmed)) {
+    return "Delayed";
+  }
+  if (/^Manual price$/i.test(trimmed)) {
+    return "Manual";
+  }
+  if (/^Delisted\s*\/\s*Worthless$/i.test(trimmed)) {
+    return "Delisted";
+  }
+  if (/^Price unavailable$/i.test(trimmed)) {
+    return "Unavailable";
+  }
+  if (/^Price not found$/i.test(trimmed)) {
+    return "Not found";
+  }
+  return trimmed;
+}
+
 

@@ -54,7 +54,7 @@ export function Sheet({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 backdrop-blur-[2px] sm:items-center sm:px-4 sm:py-6"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-[#0E1117]/80 sm:items-center sm:px-4 sm:py-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -80,7 +80,7 @@ export function Sheet({
             exit={{ opacity: 0, y: 18, scale: 0.99 }}
             transition={springSmooth}
             onMouseDown={(event) => event.stopPropagation()}
-            className={`material flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[26px] border border-line bg-surface shadow-raised sm:max-h-[88dvh] sm:rounded-[22px] ${maxWidthClass}`}
+            className={`flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[16px] border border-line bg-surface shadow-raised sm:max-h-[88dvh] sm:rounded-[16px] ${maxWidthClass}`}
           >
             {/* Mobile grabber handle */}
             <div
@@ -88,17 +88,17 @@ export function Sheet({
               onPointerDown={(event) => dragControls.start(event)}
               className="flex shrink-0 cursor-grab touch-none justify-center pt-2.5 pb-1 sm:hidden"
             >
-              <span className="h-1.25 w-9 rounded-full bg-ink-3/35" />
+              <span className="h-1 w-9 rounded-full bg-ink-3/50" />
             </div>
 
             {/* Pinned Sheet Header */}
-            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 pt-2.5 pb-3.5 sm:px-6 sm:pt-5 sm:pb-4">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-line px-5 pt-3 pb-3.5 sm:pt-5 sm:pb-4">
               <div className="min-w-0">
-                <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-ink sm:text-[19px]">
+                <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
                   {title}
                 </h2>
                 {description && (
-                  <p className="mt-0.5 text-[13px] leading-[1.35] text-ink-2">
+                  <p className="mt-0.5 text-[12px] leading-[1.35] text-ink-2">
                     {description}
                   </p>
                 )}
@@ -107,9 +107,9 @@ export function Sheet({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-full bg-field-bg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:text-ink"
               >
-                <X size={15} strokeWidth={2.25} aria-hidden="true" />
+                <X size={16} strokeWidth={2} aria-hidden="true" />
               </button>
             </div>
 

@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { BRAND_MARK_GEOMETRY, BRAND_PALETTE } from "@/lib/brand";
 
 export const size = {
   width: 180,
@@ -17,29 +18,44 @@ export default function AppleIcon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "linear-gradient(155deg, #1a1d24 0%, #0b0d12 100%)",
+          background: BRAND_PALETTE.background,
         }}
       >
         <svg
           width="180"
           height="180"
-          viewBox="0 0 512 512"
+          viewBox={BRAND_MARK_GEOMETRY.viewBox}
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
         >
           <path
-            d="M116 338 L194 268 L254 294 L334 196 L396 154 L396 364 L116 364 Z"
-            fill="rgba(10, 132, 255, 0.18)"
+            d={BRAND_MARK_GEOMETRY.areaPath}
+            fill="rgba(91, 141, 239, 0.16)"
           />
           <path
-            d="M116 338 L194 268 L254 294 L334 196 L396 154"
-            stroke="#0a84ff"
-            strokeWidth="32"
+            d={BRAND_MARK_GEOMETRY.stemPath}
+            stroke={BRAND_PALETTE.ink}
+            strokeWidth="5.2"
             strokeLinecap="round"
-            strokeLinejoin="round"
           />
-          <circle cx="396" cy="154" r="26" fill="#34c759" />
-          <circle cx="396" cy="154" r="11" fill="#ffffff" />
+          <path
+            d={BRAND_MARK_GEOMETRY.trajectoryPath}
+            stroke={BRAND_PALETTE.accent}
+            strokeWidth="5.2"
+            strokeLinecap="round"
+          />
+          <path
+            d={BRAND_MARK_GEOMETRY.lowerWingPath}
+            stroke={BRAND_PALETTE.ink}
+            strokeWidth="5.2"
+            strokeLinecap="round"
+          />
+          <circle
+            cx={BRAND_MARK_GEOMETRY.apexNode.cx}
+            cy={BRAND_MARK_GEOMETRY.apexNode.cy}
+            r={BRAND_MARK_GEOMETRY.apexNode.r}
+            fill={BRAND_PALETTE.gain}
+          />
         </svg>
       </div>
     ),
@@ -48,4 +64,3 @@ export default function AppleIcon() {
     },
   );
 }
-

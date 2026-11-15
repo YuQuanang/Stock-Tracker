@@ -113,6 +113,24 @@ export class TtlCache<V> {
     return promise;
   }
 
+  delete(key: string): void {
+    this.store.delete(key);
+    this.inFlight.delete(key);
+  }
+
+  deleteByPrefix(prefix: string): void {
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) {
+        this.store.delete(key);
+      }
+    }
+    for (const key of this.inFlight.keys()) {
+      if (key.startsWith(prefix)) {
+        this.inFlight.delete(key);
+      }
+    }
+  }
+
   clear(): void {
     this.store.clear();
     this.inFlight.clear();

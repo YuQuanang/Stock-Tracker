@@ -16,14 +16,14 @@ interface EmptyStateProps {
  */
 export function EmptyState({ icon: Icon, title, description, actions }: EmptyStateProps) {
   return (
-    <Card className="flex flex-col items-center px-6 py-14 text-center">
-      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-2 text-ink-2">
-        <Icon size={26} strokeWidth={1.75} aria-hidden="true" />
+    <Card className="flex flex-col items-center px-5 py-12 text-center">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[12px] border border-line bg-surface-2 text-ink-2">
+        <Icon size={20} strokeWidth={1.75} aria-hidden="true" />
       </div>
-      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-      <p className="mt-2 max-w-md text-[15px] leading-relaxed text-ink-2">{description}</p>
+      <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">{title}</h2>
+      <p className="mt-1.5 max-w-md text-[14px] leading-relaxed text-ink-2">{description}</p>
       {actions !== undefined && (
-        <div className="mt-7 flex flex-wrap justify-center gap-3">{actions}</div>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">{actions}</div>
       )}
     </Card>
   );

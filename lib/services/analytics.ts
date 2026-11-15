@@ -302,6 +302,8 @@ function emptyPeriodReturns(): Record<PeriodReturnKey, string | null> {
     "6M": null,
     YTD: null,
     "1Y": null,
+    "3Y": null,
+    "5Y": null,
     ALL: null,
   };
 }
@@ -317,6 +319,8 @@ function formatPeriodReturns(
     "6M": toNullableDecimalString(raw["6M"], 2),
     YTD: toNullableDecimalString(raw.YTD, 2),
     "1Y": toNullableDecimalString(raw["1Y"], 2),
+    "3Y": toNullableDecimalString(raw["3Y"], 2),
+    "5Y": toNullableDecimalString(raw["5Y"], 2),
     ALL: toNullableDecimalString(raw.ALL, 2),
   };
 }
@@ -558,7 +562,7 @@ export async function computePortfolioAnalytics(
     }
   }
 
-  const benchmarkDefaultStart = addCalendarDays(asOfDate, -375);
+  const benchmarkDefaultStart = addCalendarDays(asOfDate, -1835);
   const benchmarkFetchStart =
     earliestTxDate && earliestTxDate < benchmarkDefaultStart
       ? earliestTxDate
@@ -647,7 +651,16 @@ export async function computePortfolioAnalytics(
   const benchmarkSymbolsToFetch = includeBenchmarks ? requestedBenchmarks : [];
 
   // 2. Sync FX history, daily bars (portfolio + benchmarks), live FX, and live quotes.
-  const fxSampleDates = [fxFetchStart, addCalendarDays(asOfDate, -180), asOfDate];
+  // Sample every 14 days across `[fxFetchStart .. asOfDate]` so multi-year stretches (3Y/5Y/MAX)
+  // detect and backfill interior gaps instead of falling back to spot FX.
+  const fxSampleDates = [fxFetchStart, asOfDate];
+  for (
+    let cursor = addCalendarDays(fxFetchStart, 14);
+    cursor < asOfDate;
+    cursor = addCalendarDays(cursor, 14)
+  ) {
+    fxSampleDates.push(cursor);
+  }
   if (earliestTxDate) {
     fxSampleDates.push(earliestTxDate);
   }
@@ -950,7 +963,12 @@ export async function computePortfolioAnalytics(
       ? computeXirr(timeline.xirrCashFlows)
       : null;
 
-  const periodReturnsRaw = computeHorizonReturns(activeTwrSeries, asOfDate);
+  const periodReturnsRaw = computeHorizonReturns(activeTwrSeries, asOfDate, {
+    allBaseValue: HUNDRED,
+  });
+  if (twrResult.cumulativeReturnPercent !== null) {
+    periodReturnsRaw.ALL = twrResult.cumulativeReturnPercent;
+  }
   const drawdownResult = computeDrawdownSeries(activeTwrSeries);
   const volatilityPct = computeAnnualizedVolatility(portfolioDailyReturns);
   const riskFreeDec = toDecimal(appSettings.riskFreeRate);
@@ -1108,6 +1126,10 @@ export async function computePortfolioAnalytics(
             toDecimal(firstRebased.value),
           )
         : null;
+    if (twrResult.firstActiveDate && benchCumFraction !== null) {
+      // Align ALL to the portfolio's active start date so every row matches Cum. TWR.
+      benchPeriods.ALL = benchCumFraction.mul(HUNDRED);
+    }
     const benchAnnFraction =
       firstRebased && lastRebased
         ? computeCagr(benchCumFraction, firstRebased.date, lastRebased.date)

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { filterPointsByAnalyticsRange } from "@/lib/charts/theme";
 import {
   computeAnnualizedVolatility,
   computeBenchmarkRegression,
@@ -105,9 +106,39 @@ describe("Milestone 7 Pure Finance Analytics Formulas", () => {
     const horizons = computeHorizonReturns(indexSeries, "2026-11-13");
     expect(horizons.ALL?.toNumber()).toBeCloseTo(60, 2); // 160 / 100 - 1 = +60%
     expect(horizons["1Y"]?.toNumber()).toBeCloseTo((160 / 115 - 1) * 100, 2);
+    expect(horizons["3Y"]).toBeNull();
+    expect(horizons["5Y"]).toBeNull();
     expect(horizons.YTD?.toNumber()).toBeCloseTo((160 / 120 - 1) * 100, 2); // 2025-12-31=120 -> +33.33%
     expect(horizons["1D"]?.toNumber()).toBeCloseTo((160 / 155 - 1) * 100, 2);
     expect(horizons["1W"]?.toNumber()).toBeCloseTo((160 / 150 - 1) * 100, 2);
+  });
+
+  it("computes 3Y, 5Y, and ALL horizon returns and chart slices when inception spans >= 5 years", () => {
+    const multiYearSeries = [
+      { date: "2021-04-28", value: "80" },
+      { date: "2021-11-13", value: "100" },
+      { date: "2023-11-13", value: "125" },
+      { date: "2025-11-13", value: "150" },
+      { date: "2025-12-31", value: "160" },
+      { date: "2026-11-12", value: "190" },
+      { date: "2026-11-13", value: "200" },
+    ];
+    const horizons = computeHorizonReturns(multiYearSeries, "2026-11-13");
+    expect(horizons["3Y"]?.toNumber()).toBeCloseTo((200 / 125 - 1) * 100, 2); // +60%
+    expect(horizons["5Y"]?.toNumber()).toBeCloseTo((200 / 100 - 1) * 100, 2); // +100%
+    expect(horizons.ALL?.toNumber()).toBeCloseTo((200 / 80 - 1) * 100, 2); // +150%
+
+    const threeYear = filterPointsByAnalyticsRange(multiYearSeries, "3Y");
+    expect(threeYear[0]?.date).toBe("2023-11-13");
+    const fiveYear = filterPointsByAnalyticsRange(multiYearSeries, "5Y");
+    expect(fiveYear[0]?.date).toBe("2021-11-13");
+    const maxRange = filterPointsByAnalyticsRange(multiYearSeries, "MAX");
+    expect(maxRange[0]?.date).toBe("2021-04-28");
+
+    const base100Horizons = computeHorizonReturns(multiYearSeries, "2026-11-13", {
+      allBaseValue: 100,
+    });
+    expect(base100Horizons.ALL?.toNumber()).toBeCloseTo(100, 2); // 200 / 100 - 1 = +100%
   });
 
   it("computes underwater Drawdown series with exact Peak, Trough, and Recovery dates", () => {

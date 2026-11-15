@@ -22,6 +22,10 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Portfolio } from "@/db/schema";
+import {
+  TickerMigrationSheet,
+  type TickerMigrationTarget,
+} from "@/components/holdings/ticker-migration-sheet";
 import { Sparkline } from "@/components/charts/sparkline";
 import {
   TransactionSheet,
@@ -32,14 +36,22 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AddSymbolSheet } from "@/components/watchlist/add-symbol-sheet";
 import { SimulateAlertsSheet } from "@/components/watchlist/simulate-alerts-sheet";
 import { WatchlistManageSheet } from "@/components/watchlist/watchlist-manage-sheet";
+import { usePriceFlashRef } from "@/hooks/use-price-flash";
 import { useQuotesPoll } from "@/hooks/use-quotes-poll";
-import { formatMoney, formatPercent, formatQuantity } from "@/lib/format";
+import {
+  formatCompactFreshness,
+  formatMoney,
+  formatPercent,
+  formatQuantity,
+} from "@/lib/format";
 import type { ResolvedInstrumentQuote } from "@/lib/market-data/batch-quotes";
 import type { ExchangeRateSnapshot } from "@/lib/market-data/fx";
 import type { CombinedMarketOverview } from "@/lib/market-data/hours";
+import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import type { LedgerPositionSummary } from "@/lib/services/ledger";
 import {
   formatExchangeCodeForDisplay,
@@ -85,6 +97,23 @@ function compareNullableDesc(a: number | null, b: number | null): number {
   return b - a;
 }
 
+function FlashPrice({
+  value,
+  children,
+  className = "",
+}: {
+  value: number | null;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const ref = usePriceFlashRef<HTMLDivElement>(value);
+  return (
+    <div ref={ref} className={`rounded-[6px] ${className}`}>
+      {children}
+    </div>
+  );
+}
+
 function Range52WBar({ item }: { item: ValuedWatchlistItem }) {
   if (
     item.fiftyTwoWeekLow === null ||
@@ -103,11 +132,11 @@ function Range52WBar({ item }: { item: ValuedWatchlistItem }) {
         />
         <span
           aria-hidden="true"
-          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface bg-accent shadow-xs"
+          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface bg-accent"
           style={{ left: `${item.range52wPercent}%` }}
         />
       </div>
-      <div className="num flex items-center justify-between gap-2 text-[10.5px] font-medium text-ink-3">
+      <div className="num flex items-center justify-between gap-2 text-[11px] font-medium text-ink-2">
         <span>{formatMoney(item.fiftyTwoWeekLow, item.currency)}</span>
         <span>{formatMoney(item.fiftyTwoWeekHigh, item.currency)}</span>
       </div>
@@ -142,7 +171,7 @@ function AlertPriceBadge({
         }}
         title={`Set alert price for ${displaySymbol}`}
         aria-label={`Set alert price for ${displaySymbol}`}
-        className="num inline-flex cursor-pointer items-center rounded-md px-1.5 py-0.5 text-[13px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-accent"
+        className="num inline-flex cursor-pointer items-center rounded-[6px] px-1.5 py-0.5 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-accent"
       >
         —
       </button>
@@ -172,16 +201,16 @@ function AlertPriceBadge({
         e.stopPropagation();
         onOpenModal();
       }}
-      className={`num inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11.5px] font-medium transition-opacity hover:opacity-85 ${
+      className={`num inline-flex cursor-pointer items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11.5px] font-medium transition-opacity hover:opacity-85 ${
         isTriggered
-          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+          ? "bg-accent/15 text-accent"
           : "bg-surface-2 text-ink-2"
       }`}
     >
       {isTriggered ? (
-        <BellRing className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <BellRing className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       ) : (
-        <Bell className="h-3 w-3 shrink-0 text-ink-3" aria-hidden="true" />
+        <Bell className="h-3.5 w-3.5 shrink-0 text-ink-2" aria-hidden="true" />
       )}
       <span>{label}</span>
     </button>
@@ -209,9 +238,9 @@ function PaperSimBadge({
         e.stopPropagation();
         onOpenModal();
       }}
-      className="inline-flex cursor-pointer items-center gap-1 text-left text-[11.5px] leading-snug transition-opacity hover:opacity-80"
+      className="inline-flex cursor-pointer items-center gap-1 text-left text-[12px] leading-snug transition-opacity hover:opacity-80"
     >
-      <span className="num text-ink-3">
+      <span className="num text-ink-2">
         Sim {formatQuantity(item.paperShares ?? "0")} sh ·
       </span>
       {item.paperGainPercent !== null ? (
@@ -223,10 +252,10 @@ function PaperSimBadge({
           {formatPercent(item.paperGainPercent)}
         </span>
       ) : (
-        <span className="text-ink-3">Unavailable</span>
+        <span className="text-ink-2">Unavailable</span>
       )}
       {item.paperExcessReturnPercent !== null && item.paperBenchmark && (
-        <span className="num text-ink-3">
+        <span className="num text-ink-2">
           ({Number(item.paperExcessReturnPercent) >= 0 ? "+" : ""}
           {formatPercent(item.paperExcessReturnPercent, { signed: false })} vs{" "}
           {item.paperBenchmark.benchmarkName})
@@ -286,6 +315,8 @@ export function WatchlistView({
 
   const [retryingSymbol, setRetryingSymbol] = useState<string | null>(null);
   const [retryFeedback, setRetryFeedback] = useState<string | null>(null);
+  const [migrationTarget, setMigrationTarget] =
+    useState<TickerMigrationTarget | null>(null);
 
   const trackedSymbols = useMemo(
     () => [
@@ -598,7 +629,7 @@ export function WatchlistView({
                 disabled={isRefreshing}
               >
                 <RefreshCw
-                  size={15}
+                  size={16}
                   strokeWidth={1.9}
                   aria-hidden="true"
                   className={isRefreshing ? "animate-spin" : undefined}
@@ -612,7 +643,7 @@ export function WatchlistView({
               size="sm"
               onClick={() => setIsManageSheetOpen(true)}
             >
-              <FolderCog size={15} strokeWidth={1.9} aria-hidden="true" />
+              <FolderCog size={16} strokeWidth={1.9} aria-hidden="true" />
               <span>Manage Lists</span>
             </Button>
             {activeWatchlist && (
@@ -621,7 +652,7 @@ export function WatchlistView({
                 size="sm"
                 onClick={() => setIsAddSheetOpen(true)}
               >
-                <Plus size={17} strokeWidth={2.2} aria-hidden="true" />
+                <Plus size={16} strokeWidth={2} aria-hidden="true" />
                 <span>Add Symbol</span>
               </Button>
             )}
@@ -640,14 +671,14 @@ export function WatchlistView({
               onClick={() => setIsManageSheetOpen(true)}
               className="h-10 px-4 text-[14px]"
             >
-              <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+              <Plus size={16} strokeWidth={2} aria-hidden="true" />
               Create watchlist
             </Button>
           }
         />
       ) : (
-        <div className="space-y-5">
-          {/* Watchlist Switcher Pills + FX Reference */}
+        <div className="space-y-6">
+          {/* Watchlist Switcher Tabs + FX Reference */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               {watchlistPortfolios.map((list) => {
@@ -658,18 +689,18 @@ export function WatchlistView({
                     key={list.id}
                     type="button"
                     onClick={() => setSelectedWatchlistId(list.id)}
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
+                    className={`inline-flex cursor-pointer items-center gap-2 rounded-[10px] px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
                       isSelected
-                        ? "bg-accent text-accent-ink shadow-xs"
-                        : "bg-surface border border-line text-ink-2 hover:text-ink"
+                        ? "bg-accent text-accent-ink"
+                        : "border border-line bg-surface text-ink-2 hover:text-ink"
                     }`}
                   >
                     <span>{list.name}</span>
                     <span
-                      className={`num rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+                      className={`num rounded-[6px] px-1.5 py-0.5 text-[11px] font-semibold ${
                         isSelected
-                          ? "bg-white/20 text-accent-ink"
-                          : "bg-surface-2 text-ink-3"
+                          ? "bg-accent-ink/15 text-accent-ink"
+                          : "bg-surface-2 text-ink-2"
                       }`}
                     >
                       {count}
@@ -680,19 +711,20 @@ export function WatchlistView({
             </div>
 
             {fxUsdToSgd && (
-              <span className="num text-[12px] text-ink-3">
-                1 USD = {fxUsdToSgd.rate} SGD · {fxUsdToSgd.label}
+              <span className="num text-[12px] text-ink-2">
+                1 USD = {fxUsdToSgd.rate} SGD ·{" "}
+                <span className="font-mono text-ink-3">{fxUsdToSgd.label}</span>
               </span>
             )}
           </div>
 
           {/* Active Triggered Alerts Banner */}
           {triggeredAlerts.length > 0 && (
-            <Card className="flex flex-wrap items-start justify-between gap-3 border-amber-500/35 bg-amber-500/[0.06] px-4 py-3.5 sm:px-5 sm:py-4">
+            <Card className="flex flex-wrap items-start justify-between gap-3 border-accent/35 bg-surface-2 px-4 py-3.5 sm:px-5 sm:py-4">
               <div className="flex items-start gap-3">
                 <BellRing
                   size={18}
-                  className="mt-0.5 shrink-0 text-amber-500"
+                  className="mt-0.5 shrink-0 text-accent"
                   aria-hidden="true"
                 />
                 <div className="text-[13.5px] leading-relaxed">
@@ -715,7 +747,7 @@ export function WatchlistView({
                     key={alertItem.instrumentId}
                     type="button"
                     onClick={() => setSimulatingItem(alertItem)}
-                    className="num cursor-pointer rounded-full border border-amber-500/30 bg-surface px-3 py-1 text-[12.5px] font-medium text-ink transition-colors hover:border-amber-500"
+                    className="num cursor-pointer rounded-[10px] border border-accent/40 bg-surface px-3 py-1 text-[12.5px] font-medium text-ink transition-colors hover:border-accent"
                   >
                     <span className="font-mono font-semibold">
                       {formatSymbolForDisplay(alertItem.symbol)}
@@ -734,7 +766,7 @@ export function WatchlistView({
           {actionError && (
             <div
               role="alert"
-              className="rounded-[12px] bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
+              className="rounded-[10px] bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
             >
               {actionError}
             </div>
@@ -751,14 +783,14 @@ export function WatchlistView({
                   onClick={() => setIsAddSheetOpen(true)}
                   className="h-10 px-4 text-[14px]"
                 >
-                  <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+                  <Plus size={16} strokeWidth={2} aria-hidden="true" />
                   Add first symbol
                 </Button>
               }
             />
           ) : (
             <>
-              {/* Sort & Search Toolbar (matches HoldingsView) */}
+              {/* Sort & Search Toolbar */}
               <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative sm:w-[235px]">
                   <select
@@ -773,17 +805,17 @@ export function WatchlistView({
                     <option value="symbol">Sort: Symbol A–Z</option>
                   </select>
                   <ChevronDown
-                    size={14}
-                    strokeWidth={2}
+                    size={16}
+                    strokeWidth={1.9}
                     aria-hidden="true"
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3"
+                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-2"
                   />
                 </div>
 
                 <div className="relative w-full sm:w-[240px]">
                   <Search
-                    size={15}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-2"
                     aria-hidden="true"
                   />
                   <input
@@ -798,14 +830,14 @@ export function WatchlistView({
               </div>
 
               {displayedItems.length === 0 ? (
-                <Card className="px-4 py-10 text-center text-[14px] text-ink-3">
+                <Card className="px-4 py-10 text-center text-[14px] text-ink-2">
                   No watched symbols match &ldquo;{searchQuery}&rdquo;.
                 </Card>
               ) : (
                 <>
                   {!hideEmptyPricedWatchlist && (
                     <>
-                      {/* Mobile Apple Stocks-Style Inset Grouped List (< 768px) */}
+                      {/* Mobile Watchlist (< 768px) */}
                       <Card className="divide-y divide-line overflow-hidden md:hidden">
                         {pricedDisplayedItems.map((item, idx) => {
                       const rowKey = `${item.portfolioId}::${item.instrumentId}`;
@@ -823,11 +855,11 @@ export function WatchlistView({
                           >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-mono text-[15.5px] font-semibold text-ink">
+                                <span className="font-mono text-[15px] font-semibold text-ink">
                                   {formatSymbolForDisplay(item.symbol)}
                                 </span>
                                 {(exchangeLabel || item.currency) && (
-                                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
+                                  <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
                                     {exchangeLabel || item.currency}
                                   </span>
                                 )}
@@ -845,35 +877,62 @@ export function WatchlistView({
                             />
 
                             <div className="shrink-0 text-right">
-                              <p className="num text-[15px] font-semibold text-ink">
-                                {item.unitPrice
-                                  ? formatMoney(item.unitPrice, item.currency, {
-                                      maximumFractionDigits: 4,
-                                    })
-                                  : "Unavailable"}
-                              </p>
-                              <div className="mt-0.5 flex justify-end">
-                                {item.dayChange !== null &&
-                                item.dayChangePercent !== null ? (
-                                  <GainBadge
-                                    amount={item.dayChange}
-                                    currency={item.currency}
-                                    percent={item.dayChangePercent}
-                                    size="sm"
-                                    pill
-                                  />
-                                ) : (
-                                  <span className="text-[11.5px] text-ink-3">
-                                    {item.freshnessLabel}
-                                  </span>
-                                )}
-                              </div>
+                              {isRefreshing && !item.unitPrice ? (
+                                <div className="space-y-1.5">
+                                  <Skeleton className="ml-auto h-4 w-16" />
+                                  <Skeleton className="ml-auto h-3.5 w-14" />
+                                </div>
+                              ) : (
+                                <>
+                                  <FlashPrice
+                                    value={
+                                      item.unitPrice
+                                        ? Number(item.unitPrice)
+                                        : null
+                                    }
+                                  >
+                                    <p className="num text-[15px] font-semibold text-ink">
+                                      {item.unitPrice
+                                        ? formatMoney(
+                                            item.unitPrice,
+                                            item.currency,
+                                            { maximumFractionDigits: 4 },
+                                          )
+                                        : "Unavailable"}
+                                    </p>
+                                  </FlashPrice>
+                                  <div className="mt-0.5 flex justify-end">
+                                    {item.dayChange !== null &&
+                                    item.dayChangePercent !== null ? (
+                                      <GainBadge
+                                        amount={item.dayChange}
+                                        currency={item.currency}
+                                        percent={item.dayChangePercent}
+                                        size="sm"
+                                        pill
+                                      />
+                                    ) : (
+                                      <span
+                                        title={item.freshnessLabel}
+                                        className="font-mono text-[11.5px] text-ink-3"
+                                      >
+                                        {formatCompactFreshness(item.freshnessLabel)}
+                                      </span>
+                                    )}
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </Link>
 
                           {/* Meta details row: freshness & alert price */}
-                          <div className="num mt-2.5 flex flex-wrap items-center justify-between gap-3 text-[11.5px] text-ink-3">
-                            <span>{item.freshnessLabel}</span>
+                          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-3 text-[12px] text-ink-2">
+                            <span
+                              title={item.freshnessLabel}
+                              className="font-mono text-ink-3"
+                            >
+                              {formatCompactFreshness(item.freshnessLabel)}
+                            </span>
                             <AlertPriceBadge
                               item={item}
                               onOpenModal={() => setSimulatingItem(item)}
@@ -889,7 +948,7 @@ export function WatchlistView({
                               </div>
                             )}
 
-                          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2">
+                          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
                             <PaperSimBadge
                               item={item}
                               onOpenModal={() => setSimulatingItem(item)}
@@ -905,7 +964,7 @@ export function WatchlistView({
                                     onClick={() =>
                                       moveItemByOffset(item.instrumentId, -1)
                                     }
-                                    className="cursor-pointer rounded p-1.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30"
+                                    className="cursor-pointer rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30"
                                   >
                                     <ArrowUp
                                       className="h-3.5 w-3.5"
@@ -921,7 +980,7 @@ export function WatchlistView({
                                     onClick={() =>
                                       moveItemByOffset(item.instrumentId, 1)
                                     }
-                                    className="cursor-pointer rounded p-1.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30"
+                                    className="cursor-pointer rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30"
                                   >
                                     <ArrowDown
                                       className="h-3.5 w-3.5"
@@ -936,7 +995,7 @@ export function WatchlistView({
                                 title="Simulate & price alerts"
                                 aria-label={`Simulate and alerts for ${formatSymbolForDisplay(item.symbol)}`}
                                 onClick={() => setSimulatingItem(item)}
-                                className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
                               >
                                 <Calculator
                                   className="h-3.5 w-3.5"
@@ -949,10 +1008,10 @@ export function WatchlistView({
                                 <button
                                   type="button"
                                   onClick={() => openConvertToBuy(item)}
-                                  className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink"
+                                  className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] bg-accent/12 px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink"
                                 >
                                   <ArrowRightLeft
-                                    className="h-3 w-3"
+                                    className="h-3.5 w-3.5"
                                     aria-hidden="true"
                                   />
                                   {item.paperShares ? "Convert" : "Buy"}
@@ -964,7 +1023,7 @@ export function WatchlistView({
                                 aria-label={`Remove ${formatSymbolForDisplay(item.symbol)}`}
                                 disabled={isRemoving}
                                 onClick={() => void handleRemoveItem(item)}
-                                className="cursor-pointer rounded p-1.5 text-ink-3 transition-colors hover:bg-loss/10 hover:text-loss disabled:opacity-40"
+                                className="cursor-pointer rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-loss/10 hover:text-loss disabled:opacity-40"
                               >
                                 {isRemoving ? (
                                   <Loader2
@@ -985,19 +1044,22 @@ export function WatchlistView({
                     })}
                   </Card>
 
-                  {/* Desktop Financial Watchlist Table (>= 768px, matches HoldingsView) */}
+                  {/* Desktop Watchlist Table (>= 768px) */}
                   <Card className="hidden overflow-hidden md:block">
                     <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-left text-[13.5px]">
+                      <table className="w-full border-collapse text-left text-[14px]">
                         <thead>
-                          <tr className="border-b border-line text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                          <tr className="border-b border-line text-[12px] font-medium text-ink-2">
                             {canReorder && (
                               <th className="w-16 py-3 pl-3 pr-1" />
                             )}
                             <th className="px-4 py-3">Instrument</th>
-                            <th className="px-3 py-3">Trend</th>
-                            <th className="px-3 py-3 text-right">Price</th>
-                            <th className="px-3 py-3 text-right">Day Change</th>
+                            <th className="px-2.5 py-3">Trend</th>
+                            <th className="px-2.5 py-3 text-right">Price</th>
+                            <th className="px-2.5 py-3 text-right">
+                              <span>Day</span>
+                              <span className="block">Change</span>
+                            </th>
                             <th className="px-3 py-3">52W Range</th>
                             <th className="px-3 py-3 text-right">
                               Alert Price
@@ -1033,7 +1095,7 @@ export function WatchlistView({
                                   handleDropOnItem(item.instrumentId)
                                 }
                                 onDragEnd={() => setDraggedInstrumentId(null)}
-                                className={`cursor-pointer transition-colors hover:bg-surface-2/55 ${
+                                className={`cursor-pointer transition-colors hover:bg-surface-2 ${
                                   draggedInstrumentId === item.instrumentId
                                     ? "opacity-50"
                                     : ""
@@ -1064,30 +1126,30 @@ export function WatchlistView({
                                             -1,
                                           )
                                         }
-                                        className="cursor-pointer rounded p-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-25"
+                                        className="cursor-pointer rounded p-0.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-25"
                                       >
                                         <ArrowUp
-                                          className="h-3 w-3"
+                                          className="h-3.5 w-3.5"
                                           aria-hidden="true"
                                         />
                                       </button>
-                                        <button
-                                          type="button"
-                                          aria-label={`Move ${formatSymbolForDisplay(item.symbol)} down`}
-                                          disabled={
-                                            idx ===
-                                            pricedDisplayedItems.length - 1
-                                          }
-                                          onClick={() =>
-                                            moveItemByOffset(
-                                              item.instrumentId,
-                                              1,
-                                            )
-                                          }
-                                        className="cursor-pointer rounded p-0.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-25"
+                                      <button
+                                        type="button"
+                                        aria-label={`Move ${formatSymbolForDisplay(item.symbol)} down`}
+                                        disabled={
+                                          idx ===
+                                          pricedDisplayedItems.length - 1
+                                        }
+                                        onClick={() =>
+                                          moveItemByOffset(
+                                            item.instrumentId,
+                                            1,
+                                          )
+                                        }
+                                        className="cursor-pointer rounded p-0.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-25"
                                       >
                                         <ArrowDown
-                                          className="h-3 w-3"
+                                          className="h-3.5 w-3.5"
                                           aria-hidden="true"
                                         />
                                       </button>
@@ -1100,32 +1162,37 @@ export function WatchlistView({
                                     <Link
                                       href={detailHref}
                                       onClick={(e) => e.stopPropagation()}
-                                      className="font-mono text-[14.5px] font-semibold text-ink hover:text-accent"
+                                      className="font-mono text-[14px] font-semibold text-ink hover:text-accent"
                                     >
                                       <span>{formatSymbolForDisplay(item.symbol)}</span>
                                     </Link>
                                     {(exchangeLabel || item.currency) && (
-                                      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
+                                      <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
                                         {exchangeLabel || item.currency}
                                       </span>
                                     )}
                                   </div>
-                                  <p className="mt-0.5 max-w-[205px] truncate text-[12px] text-ink-3">
+                                  <p className="mt-0.5 max-w-[205px] truncate text-[12px] text-ink-2">
                                     {item.name ?? "—"}
                                   </p>
                                 </td>
 
-                                <td className="px-3 py-3.5 align-middle">
+                                <td className="px-2.5 py-3 align-middle">
                                   <Sparkline
                                     values={item.sparkline}
-                                    width={82}
+                                    width={72}
                                     height={26}
                                   />
                                 </td>
 
-                                <td className="num whitespace-nowrap px-3 py-3.5 text-right align-middle">
-                                  {item.unitPrice ? (
-                                    <>
+                                <td className="num whitespace-nowrap px-2.5 py-3 text-right align-middle">
+                                  {isRefreshing && !item.unitPrice ? (
+                                    <div className="space-y-1">
+                                      <Skeleton className="ml-auto h-4 w-16" />
+                                      <Skeleton className="ml-auto h-3 w-12" />
+                                    </div>
+                                  ) : item.unitPrice ? (
+                                    <FlashPrice value={Number(item.unitPrice)}>
                                       <div className="font-medium text-ink">
                                         {formatMoney(
                                           item.unitPrice,
@@ -1133,18 +1200,24 @@ export function WatchlistView({
                                           { maximumFractionDigits: 4 },
                                         )}
                                       </div>
-                                      <div className="text-[11.5px] text-ink-3">
-                                        {item.freshnessLabel}
+                                      <div
+                                        title={item.freshnessLabel}
+                                        className="font-mono text-[11px] text-ink-3"
+                                      >
+                                        {formatCompactFreshness(item.freshnessLabel)}
                                       </div>
-                                    </>
+                                    </FlashPrice>
                                   ) : (
-                                    <span className="inline-flex rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-3">
-                                      Price unavailable
+                                    <span
+                                      title={item.freshnessLabel}
+                                      className="inline-flex rounded-[6px] bg-surface-2 px-2 py-0.5 text-[12px] text-ink-2"
+                                    >
+                                      {formatCompactFreshness(item.freshnessLabel)}
                                     </span>
                                   )}
                                 </td>
 
-                                <td className="whitespace-nowrap px-3 py-3.5 text-right align-middle">
+                                <td className="whitespace-nowrap px-2.5 py-3 text-right align-middle">
                                   {item.dayChange !== null &&
                                   item.dayChangePercent !== null ? (
                                     <GainBadge
@@ -1152,6 +1225,7 @@ export function WatchlistView({
                                       currency={item.currency}
                                       percent={item.dayChangePercent}
                                       size="sm"
+                                      layout="stacked"
                                     />
                                   ) : (
                                     <span className="text-ink-3">—</span>
@@ -1183,7 +1257,7 @@ export function WatchlistView({
                                       title="Simulate & price alerts"
                                       aria-label={`Simulate and alerts for ${formatSymbolForDisplay(item.symbol)}`}
                                       onClick={() => setSimulatingItem(item)}
-                                      className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
+                                      className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
                                     >
                                       <Calculator
                                         className="h-3.5 w-3.5"
@@ -1215,10 +1289,10 @@ export function WatchlistView({
                                             : "Record a Buy transaction"
                                         }
                                         onClick={() => openConvertToBuy(item)}
-                                        className="inline-flex cursor-pointer items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink"
+                                        className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] bg-accent/12 px-2.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-accent-ink"
                                       >
                                         <ArrowRightLeft
-                                          className="h-3 w-3"
+                                          className="h-3.5 w-3.5"
                                           aria-hidden="true"
                                         />
                                         <span>
@@ -1234,7 +1308,7 @@ export function WatchlistView({
                                       onClick={() =>
                                         void handleRemoveItem(item)
                                       }
-                                      className="cursor-pointer rounded-full p-1.5 text-ink-3 transition-colors hover:bg-loss/10 hover:text-loss disabled:opacity-40"
+                                      className="cursor-pointer rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-loss/10 hover:text-loss disabled:opacity-40"
                                     >
                                       {isRemoving ? (
                                         <Loader2
@@ -1252,7 +1326,7 @@ export function WatchlistView({
                                     <Link
                                       href={detailHref}
                                       aria-label={`Open ${formatSymbolForDisplay(item.symbol)} detail`}
-                                      className="rounded-full p-1 text-ink-3 transition-colors hover:text-ink"
+                                      className="rounded-[8px] p-1 text-ink-2 transition-colors hover:text-ink"
                                     >
                                       <ChevronRight
                                         size={16}
@@ -1277,19 +1351,19 @@ export function WatchlistView({
                       <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <h2 className="text-[15.5px] font-semibold tracking-tight text-ink">
+                            <h2 className="text-[18px] font-semibold tracking-tight text-ink">
                               Prices Not Found
                             </h2>
-                            <span className="num rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
+                            <span className="num rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-ink-2">
                               {unpricedDisplayedItems.length}
                             </span>
                           </div>
-                          <p className="mt-0.5 text-[12.5px] text-ink-3">
+                          <p className="mt-1 text-[13px] text-ink-2">
                             Excluded from background quote polling. Retry lookup
                             or remove symbols that cannot be priced.
                           </p>
                           {retryFeedback && (
-                            <p className="mt-1 text-[12px] font-medium text-accent">
+                            <p className="mt-1 text-[12.5px] font-medium text-accent">
                               {retryFeedback}
                             </p>
                           )}
@@ -1300,7 +1374,6 @@ export function WatchlistView({
                             type="button"
                             variant="secondary"
                             size="xs"
-                            shape="pill"
                             disabled={isRetrying}
                             onClick={() =>
                               void handleRetryLookup(retryableNotFoundSymbols)
@@ -1329,11 +1402,16 @@ export function WatchlistView({
                             isRetrying &&
                             (retryingSymbol === item.symbol ||
                               retryingSymbol === "__all__");
+                          const transition = getSgxTickerTransition(
+                            item.symbol,
+                          );
                           const reasonLabel = isCrypto
                             ? "Crypto price disabled"
-                            : isNotFound
-                              ? "Not found on providers"
-                              : "Quote unavailable";
+                            : transition
+                              ? `Renamed to ${transition.newSymbol}`
+                              : isNotFound
+                                ? "Not found on providers"
+                                : "Quote unavailable";
                           const exchangeLabel = formatExchangeCodeForDisplay(
                             item.exchangeCode,
                           );
@@ -1354,37 +1432,65 @@ export function WatchlistView({
                                     {formatSymbolForDisplay(item.symbol)}
                                   </Link>
                                   {exchangeLabel && (
-                                    <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
+                                    <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
                                       {exchangeLabel}
                                     </span>
                                   )}
                                   <span
                                     title={item.priceNotFoundReason ?? undefined}
-                                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                    className={`rounded-[6px] px-2 py-0.5 text-[11.5px] font-medium ${
                                       isCrypto
-                                        ? "bg-surface-2 text-ink-3"
-                                        : "bg-accent/10 text-accent"
+                                        ? "bg-surface-2 text-ink-2"
+                                        : "bg-accent/12 text-accent"
                                     }`}
                                   >
                                     {reasonLabel}
                                   </span>
                                 </div>
 
-                                <p className="mt-0.5 truncate text-[12.5px] text-ink-2">
+                                <p className="mt-0.5 truncate text-[13px] text-ink-2">
                                   {item.name ?? "Unnamed instrument"}
                                   {alertTarget
                                     ? ` · Alert ${formatMoney(alertTarget, item.currency)}`
                                     : ""}
                                 </p>
+                                {transition && (
+                                  <p className="mt-0.5 text-[12px] text-ink-3">
+                                    {transition.reason}
+                                  </p>
+                                )}
                               </div>
 
                               <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">
+                                {transition && (
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="xs"
+                                    onClick={() =>
+                                      setMigrationTarget({
+                                        instrumentId: item.instrumentId,
+                                        transition,
+                                        defaultApplyConsolidation: false,
+                                      })
+                                    }
+                                  >
+                                    <ArrowRightLeft
+                                      size={14}
+                                      strokeWidth={1.9}
+                                      aria-hidden="true"
+                                    />
+                                    <span>
+                                      Update to {transition.newSymbol}
+                                    </span>
+                                  </Button>
+                                )}
+
                                 {!isCrypto && (
                                   <Button
                                     type="button"
                                     variant="secondary"
                                     size="xs"
-                                    shape="pill"
                                     disabled={isRetrying}
                                     onClick={() =>
                                       void handleRetryLookup([item.symbol])
@@ -1398,7 +1504,7 @@ export function WatchlistView({
 
                                 <Link
                                   href={`/holdings/${encodeURIComponent(item.symbol)}`}
-                                  className="inline-flex h-7 items-center justify-center rounded-full bg-accent/12 px-2.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent/18"
+                                  className="inline-flex h-8 items-center justify-center rounded-[10px] bg-accent/12 px-3 text-[12.5px] font-medium text-accent transition-colors hover:bg-accent/18"
                                 >
                                   Details
                                 </Link>
@@ -1407,7 +1513,6 @@ export function WatchlistView({
                                   type="button"
                                   variant="secondary"
                                   size="xs"
-                                  shape="pill"
                                   disabled={isRemoving}
                                   onClick={() => void handleRemoveItem(item)}
                                   className="text-loss hover:text-loss"
@@ -1485,6 +1590,23 @@ export function WatchlistView({
           defaultQuantity={convertTarget.quantity}
         />
       )}
+
+      <TickerMigrationSheet
+        key={
+          migrationTarget
+            ? `wl-migrate-${migrationTarget.instrumentId}-${migrationTarget.transition.newSymbol}`
+            : "wl-migrate-closed"
+        }
+        target={migrationTarget}
+        onClose={() => setMigrationTarget(null)}
+        onMigrated={(targetSymbol) => {
+          setMigrationTarget(null);
+          setRetryFeedback(
+            `Updated ticker to ${targetSymbol}. Fetching live SGX quote…`,
+          );
+          router.refresh();
+        }}
+      />
     </>
   );
 }

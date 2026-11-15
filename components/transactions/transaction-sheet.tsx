@@ -863,7 +863,7 @@ export function TransactionSheet({
       <div
         role="listbox"
         aria-label="Matching stocks and ETFs"
-        className={`material absolute top-full z-30 mt-1.5 max-h-60 overflow-y-auto rounded-[13px] border border-line bg-surface p-1.5 shadow-raised ${alignmentClasses}`}
+        className={`absolute top-full z-30 mt-1.5 max-h-60 overflow-y-auto rounded-[12px] border border-line bg-surface-2 p-1.5 shadow-raised ${alignmentClasses}`}
       >
         {dropdown.isLoading && (
           <div className="flex items-center gap-2.5 px-3 py-3 text-[13px] text-ink-2">
@@ -976,7 +976,7 @@ export function TransactionSheet({
               Portfolio
             </label>
             {stock.selectionState === "verified" ? (
-              <span className="inline-flex items-center gap-1.25 whitespace-nowrap rounded-full bg-gain/12 px-2.25 py-0.5 text-[11px] font-medium text-gain">
+              <span className="inline-flex items-center gap-1.25 whitespace-nowrap rounded-[6px] bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
                 <CheckCircle2 size={12} aria-hidden="true" />
                 {stock.exchangeDisplay || stock.exchangeCode || "Verified"} ·{" "}
                 {stock.currency}
@@ -1097,7 +1097,7 @@ export function TransactionSheet({
                 }`}
               />
               {type === "Dividend" && (
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[11px] font-medium text-ink-3">
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ink-2">
                   {stock.currency}
                 </span>
               )}
@@ -1133,7 +1133,7 @@ export function TransactionSheet({
                 }}
                 className="field-input num pr-12"
               />
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[11px] font-medium text-ink-3">
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ink-2">
                 {stock.currency}
               </span>
             </div>
@@ -1177,7 +1177,7 @@ export function TransactionSheet({
                   value="1.0000"
                   className="field-input num pr-12"
                 />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[11px] font-medium text-ink-3">
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ink-2">
                   SGD
                 </span>
               </div>
@@ -1196,7 +1196,7 @@ export function TransactionSheet({
                   }}
                   className="field-input num pr-12"
                 />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[11px] font-medium text-ink-3">
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ink-2">
                   SGD
                 </span>
               </div>
@@ -1216,11 +1216,11 @@ export function TransactionSheet({
                 Manual rate
               </p>
             ) : stock.fxLabel ? (
-              <p className="mt-1 truncate text-[11.5px] leading-4 text-ink-3">
+              <p className="mt-1 truncate text-[11.5px] leading-4 text-ink-2">
                 {stock.fxLabel}
               </p>
             ) : stock.currency === "USD" ? (
-              <p className="mt-1 text-[11.5px] leading-4 text-ink-3">
+              <p className="mt-1 text-[11.5px] leading-4 text-ink-2">
                 1 USD in SGD
               </p>
             ) : null}
@@ -1241,7 +1241,7 @@ export function TransactionSheet({
               onChange={(event) => setCommission(event.target.value)}
               className="field-input num"
             />
-            <p className="mt-1 truncate text-[11.5px] leading-4 text-ink-3">
+            <p className="mt-1 truncate text-[11.5px] leading-4 text-ink-2">
               Flat fee or % (e.g. 1%)
             </p>
           </div>
@@ -1285,7 +1285,7 @@ export function TransactionSheet({
               />
             </div>
           </div>
-          <p className="mt-1 text-[11.5px] leading-4 text-ink-3">
+          <p className="mt-1 text-[11.5px] leading-4 text-ink-2">
             Asia/Singapore (UTC+8) · saved in UTC
           </p>
         </div>
@@ -1352,7 +1352,7 @@ export function TransactionSheet({
         </div>
 
         {/* Apple Wallet–style SGD Snapshot Summary Card */}
-        <div className="flex items-center justify-between gap-4 rounded-[13px] border border-line bg-field-bg px-4 py-3">
+        <div className="flex items-center justify-between gap-4 rounded-[12px] border border-line bg-field-bg px-4 py-3">
           <div className="min-w-0">
             <p className="text-[14px] font-medium tracking-[-0.01em] text-ink">
               Total in SGD
@@ -1366,7 +1366,7 @@ export function TransactionSheet({
               {sgdPreview ? formatMoney(sgdPreview.totalSgd, "SGD") : "—"}
             </p>
             {sgdPreview && stock.currency === "USD" && (
-              <p className="num text-[11.5px] text-ink-3">
+              <p className="num text-[11.5px] text-ink-2">
                 {formatMoney(sgdPreview.nativeGross, "USD")}
               </p>
             )}
@@ -1376,7 +1376,7 @@ export function TransactionSheet({
         {submitError !== null && (
           <p
             role="alert"
-            className="rounded-[11px] border border-loss/30 bg-loss/10 px-3.5 py-2.5 text-[13.5px] text-loss"
+            className="rounded-[10px] border border-loss/30 bg-loss/10 px-3.5 py-2.5 text-[13.5px] text-loss"
           >
             {submitError}
           </p>

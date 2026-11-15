@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
-import { Lock } from "lucide-react";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
+import { APP_NAME } from "@/lib/brand";
 import { springSmooth } from "@/lib/motion";
 
 interface LoginFormProps {
@@ -51,14 +52,14 @@ export function LoginForm({ nextPath }: LoginFormProps) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={springSmooth}
-      className="w-full max-w-sm rounded-[var(--radius-card)] border border-line bg-surface p-8 shadow-raised"
+      className="w-full max-w-sm rounded-[var(--radius-card)] border border-line bg-surface-2 p-6 shadow-raised"
     >
       <div className="mb-6 flex flex-col items-center text-center">
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-2 text-ink-2">
-          <Lock size={24} strokeWidth={1.75} aria-hidden="true" />
-        </div>
-        <h1 className="text-2xl font-semibold tracking-tight">Folio</h1>
-        <p className="mt-1 text-[15px] text-ink-2">Enter your password to continue.</p>
+        <BrandLogo size={48} className="mb-4" />
+        <h1 className="text-[20px] font-semibold tracking-[-0.015em] text-ink">
+          {APP_NAME}
+        </h1>
+        <p className="mt-1 text-[14px] text-ink-2">Enter your password to continue.</p>
       </div>
 
       <label htmlFor="password" className="sr-only">
@@ -76,7 +77,7 @@ export function LoginForm({ nextPath }: LoginFormProps) {
         aria-invalid={errorMessage !== null}
         aria-describedby={errorMessage !== null ? "login-error" : undefined}
         placeholder="Password"
-        className="field-input h-12 px-4 text-[16px]"
+        className="field-input h-11 px-3.5 text-[14px]"
       />
 
       {errorMessage !== null && (

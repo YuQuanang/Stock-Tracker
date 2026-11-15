@@ -6,20 +6,20 @@ export default function StockDetailLoading() {
     <div className="space-y-6" aria-busy="true" aria-label="Loading stock detail">
       {/* Back button + Title + Price Header */}
       <div className="space-y-4">
-        <Skeleton className="h-8 w-28 rounded-full" />
+        <Skeleton className="h-8 w-28 rounded-[10px]" />
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <Skeleton className="h-8 w-24" />
-              <Skeleton className="h-6 w-20 rounded-full" />
+              <Skeleton className="h-6 w-20 rounded-[8px]" />
             </div>
             <Skeleton className="h-4 w-56 max-w-full" />
             <div className="flex items-baseline gap-3 pt-1">
               <Skeleton className="h-9 w-36" />
-              <Skeleton className="h-6 w-28 rounded-full" />
+              <Skeleton className="h-6 w-28 rounded-[8px]" />
             </div>
           </div>
-          <Skeleton className="h-9.5 w-36 rounded-full" />
+          <Skeleton className="h-9.5 w-36 rounded-[10px]" />
         </div>
       </div>
 
@@ -27,7 +27,7 @@ export default function StockDetailLoading() {
       <Card className="space-y-4 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Skeleton className="h-5 w-44" />
-          <Skeleton className="h-8 w-72 max-w-full rounded-full" />
+          <Skeleton className="h-8 w-72 max-w-full rounded-[10px]" />
         </div>
         <Skeleton className="h-[320px] w-full rounded-[12px]" />
       </Card>

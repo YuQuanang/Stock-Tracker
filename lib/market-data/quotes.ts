@@ -2,7 +2,8 @@
  * Server-side stock price fetcher (latest quote + historical date lookup).
  *
  * Primary source: Yahoo Finance `/v8/finance/chart/{symbol}`.
- * Fallback 1 (latest US quote): Finnhub `/api/v1/quote` when `FINNHUB_API_KEY` is set.
+ * Fallback 1 (US quote): Finnhub `/api/v1/quote` when `FINNHUB_API_KEY` is set.
+ * Fallback 1 (SGX quote): TradingView Singapore Scanner (`scanner.tradingview.com`).
  * Fallback 2 (historical/EOD): Stooq daily CSV `/q/d/l/`.
  *
  * Every returned price uses exact decimal strings (never floating-point math)
@@ -17,15 +18,24 @@ import {
   MarketDataError,
 } from "@/lib/market-data/errors";
 import {
+  formatShortMarketDate,
   getMarketSessionStatus,
   getSingaporeDateString,
   inferMarketRegion,
 } from "@/lib/market-data/hours";
 import {
   globalProviderChain,
-  type ProviderChain,
+  ProviderChain,
   type ProviderStep,
 } from "@/lib/market-data/provider-chain";
+import {
+  formatTransitionReason,
+  getSgxTickerTransition,
+} from "@/lib/market-data/sgx-transitions";
+import {
+  fetchDailyBarsViaTradingView,
+  fetchLatestViaTradingViewSgx,
+} from "@/lib/market-data/tradingview";
 
 export type PriceMarketStatus =
   | "live"
@@ -96,38 +106,7 @@ interface FinnhubQuoteResponse {
   t?: number; // unix timestamp
 }
 
-const MONTH_SHORT_NAMES = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-/** Formats `2026-11-06` into `"6 Nov"` (same year) or `"6 Nov 2021"` (past year). */
-export function formatShortMarketDate(
-  isoDate: string,
-  referenceYear?: number,
-): string {
-  const [yearStr, monthStr, dayStr] = isoDate.split("-");
-  const year = Number(yearStr);
-  const monthIndex = Number(monthStr) - 1;
-  const day = Number(dayStr);
-  const monthLabel = MONTH_SHORT_NAMES[monthIndex] ?? monthStr;
-  const currentYear = referenceYear ?? new Date().getUTCFullYear();
-
-  if (year === currentYear) {
-    return `${day} ${monthLabel}`;
-  }
-  return `${day} ${monthLabel} ${year}`;
-}
+export { formatShortMarketDate } from "@/lib/market-data/hours";
 
 function toIsoDateInTimezone(unixSeconds: number, timeZone: string): string {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -219,11 +198,44 @@ async function fetchLatestViaYahoo(
     }
   }
 
-  const prevCloseNum = meta.chartPreviousClose ?? meta.previousClose;
-  const previousClose =
-    typeof prevCloseNum === "number" && Number.isFinite(prevCloseNum)
-      ? toDecimalString(toDecimal(prevCloseNum), 6)
-      : null;
+  // Yahoo `range=5d` sets `chartPreviousClose` to the close BEFORE the 5-day
+  // chart window rather than yesterday's close; prefer the last daily bar
+  // strictly before `effectiveDate` when daily bars are included.
+  let previousClose: string | null = null;
+  const barTimestamps = result?.timestamp ?? [];
+  const barCloses = result?.indicators?.quote?.[0]?.close ?? [];
+  for (
+    let idx = Math.min(barTimestamps.length, barCloses.length) - 1;
+    idx >= 0;
+    idx -= 1
+  ) {
+    const barClose = barCloses[idx];
+    const barTimestamp = barTimestamps[idx];
+    if (
+      typeof barClose !== "number" ||
+      !Number.isFinite(barClose) ||
+      barClose <= 0 ||
+      typeof barTimestamp !== "number"
+    ) {
+      continue;
+    }
+    const barDate = toIsoDateInTimezone(barTimestamp, exchangeTimeZone);
+    if (barDate < effectiveDate) {
+      previousClose = toDecimalString(
+        toDecimal(barClose).toDecimalPlaces(4),
+        4,
+      );
+      break;
+    }
+  }
+
+  if (previousClose === null) {
+    const prevCloseNum = meta.previousClose ?? meta.chartPreviousClose;
+    previousClose =
+      typeof prevCloseNum === "number" && Number.isFinite(prevCloseNum)
+        ? toDecimalString(toDecimal(prevCloseNum), 6)
+        : null;
+  }
 
   return {
     symbol: meta.symbol ?? symbol,
@@ -542,6 +554,48 @@ export interface FetchStockPriceOptions {
  * Fetches either the latest price or a backdated historical closing price for
  * `symbol`. Never fabricates a price — throws `MarketDataError` on failure.
  */
+async function fetchHistoricalViaTradingView(
+  symbol: string,
+  targetDate: string,
+  now: Date,
+): Promise<StockPriceQuote> {
+  const [y, m, d] = targetDate.split("-").map(Number);
+  const startDate = new Date(Date.UTC(y, m - 1, d) - 10 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { currency, bars } = await fetchDailyBarsViaTradingView({
+    symbol,
+    startDate,
+    endDate: targetDate,
+  });
+
+  const latestBar = bars[bars.length - 1];
+  if (!latestBar) {
+    throw new MarketDataError(
+      "not_found",
+      "TradingView",
+      `No trading session found on TradingView for ${symbol} on or before ${targetDate}.`,
+    );
+  }
+
+  const cleanedClose = toDecimal(latestBar.close).toDecimalPlaces(4);
+  const referenceYear = Number(getSingaporeDateString(now).slice(0, 4));
+  const region = inferMarketRegion(symbol);
+  return {
+    symbol: symbol.trim().toUpperCase(),
+    price: toDecimalString(cleanedClose, 4),
+    previousClose: null,
+    currency,
+    exchangeCode: region === "SG" ? "SES" : "NMS",
+    asOf: `${latestBar.date}T00:00:00.000Z`,
+    effectiveDate: latestBar.date,
+    priceStatus: "historical",
+    freshnessLabel: `Close on ${formatShortMarketDate(latestBar.date, referenceYear)}`,
+    source: "tradingview",
+  };
+}
+
 export async function fetchStockPrice(
   rawSymbol: string,
   options: FetchStockPriceOptions = {},
@@ -566,7 +620,9 @@ export async function fetchStockPrice(
     : session?.isOpen
       ? LATEST_QUOTE_OPEN_TTL_MS
       : LATEST_QUOTE_CLOSED_TTL_MS;
-  const activeChain = options.chain ?? globalProviderChain;
+  const activeChain =
+    options.chain ??
+    (options.fetchImpl ? new ProviderChain() : globalProviderChain);
 
   const execute = async (): Promise<StockPriceQuote> => {
     if (isBackdated && requestedDate !== null) {
@@ -581,17 +637,24 @@ export async function fetchStockPrice(
               options.fetchImpl,
             ),
         },
-        {
-          provider: "stooq",
-          execute: () =>
-            fetchViaStooqCsv(symbol, requestedDate, now, options.fetchImpl),
-        },
       ];
+      if (!options.fetchImpl) {
+        historicalSteps.push({
+          provider: "tradingview",
+          execute: () =>
+            fetchHistoricalViaTradingView(symbol, requestedDate, now),
+        });
+      }
+      historicalSteps.push({
+        provider: "stooq",
+        execute: () =>
+          fetchViaStooqCsv(symbol, requestedDate, now, options.fetchImpl),
+      });
       const resolved = await activeChain.execute(historicalSteps, nowMs);
       return resolved.value;
     }
 
-    // Latest price path: Yahoo -> Finnhub (US stocks/ETFs) -> Stooq EOD
+    // Latest price path: Yahoo -> Finnhub (US stocks/ETFs) / TradingView (SGX) -> Stooq EOD
     const region = inferMarketRegion(symbol);
     let finnhubKey: string | undefined;
     try {
@@ -607,7 +670,13 @@ export async function fetchStockPrice(
       },
     ];
 
-    if (region === "US" && !symbol.startsWith("^") && finnhubKey) {
+    if (region === "SG") {
+      latestSteps.push({
+        provider: "tradingview",
+        execute: () =>
+          fetchLatestViaTradingViewSgx(symbol, now, options.fetchImpl),
+      });
+    } else if (region === "US" && !symbol.startsWith("^") && finnhubKey) {
       const apiKey = finnhubKey;
       latestSteps.push({
         provider: "finnhub",
@@ -636,18 +705,25 @@ export async function fetchStockPrice(
     try {
       return await execute();
     } catch (error) {
-      if (
-        !options.skipCache &&
-        !options.fetchImpl &&
-        error instanceof MarketDataError &&
-        error.kind === "not_found"
-      ) {
-        notFoundQuoteCache.set(
-          cacheKey,
-          error.message,
-          NOT_FOUND_QUOTE_TTL_MS,
-          nowMs,
-        );
+      if (error instanceof MarketDataError && error.kind === "not_found") {
+        const transition = getSgxTickerTransition(symbol);
+        const enrichedError = transition
+          ? new MarketDataError(
+              "not_found",
+              error.provider,
+              formatTransitionReason(transition),
+            )
+          : error;
+
+        if (!options.skipCache && !options.fetchImpl) {
+          notFoundQuoteCache.set(
+            cacheKey,
+            enrichedError.message,
+            NOT_FOUND_QUOTE_TTL_MS,
+            nowMs,
+          );
+        }
+        throw enrichedError;
       }
       throw error;
     }
@@ -656,6 +732,15 @@ export async function fetchStockPrice(
   return options.skipCache
     ? runFetch()
     : quoteCache.getOrFetch(cacheKey, ttl, runFetch);
+}
+
+export function clearQuoteCacheForSymbol(rawSymbol: string): void {
+  const prefix = `${rawSymbol.trim().toUpperCase()}|`;
+  if (prefix === "|") {
+    return;
+  }
+  quoteCache.deleteByPrefix(prefix);
+  notFoundQuoteCache.deleteByPrefix(prefix);
 }
 
 export function clearQuoteCache(): void {

@@ -1181,7 +1181,7 @@ export async function exportCleanCsvFromDb(
 
   const sgtToday = currentSgtDateString();
   return {
-    filename: `Folio-Transactions-${sgtToday}.csv`,
+    filename: `Kestrel-Transactions-${sgtToday}.csv`,
     content: writeCleanCsv(cleanRows),
   };
 }
@@ -1191,7 +1191,7 @@ export function exportPlainTemplateCsv(): {
   content: string;
 } {
   return {
-    filename: "Folio-Import-Template.csv",
+    filename: "Kestrel-Import-Template.csv",
     content: generatePlainCsvTemplate(),
   };
 }
@@ -1235,7 +1235,7 @@ export async function exportFullBackupJson(
 
   const payload = {
     schemaVersion: 1,
-    app: "Folio",
+    app: "Kestrel",
     exportedAt: new Date().toISOString(),
     timezone: "Asia/Singapore",
     settings: appSettings,
@@ -1250,7 +1250,7 @@ export async function exportFullBackupJson(
 
   const sgtToday = currentSgtDateString();
   return {
-    filename: `Folio-Backup-${sgtToday}.json`,
+    filename: `Kestrel-Backup-${sgtToday}.json`,
     content: `${JSON.stringify(payload, null, 2)}\n`,
   };
 }

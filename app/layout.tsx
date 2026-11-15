@@ -1,19 +1,33 @@
 import type { Metadata, Viewport } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+});
+
 export const metadata: Metadata = {
-  applicationName: "Folio",
+  applicationName: APP_NAME,
   title: {
-    default: "Folio",
-    template: "%s · Folio",
+    default: APP_NAME,
+    template: `%s · ${APP_NAME}`,
   },
-  description: "A personal stock and portfolio tracker.",
+  description: APP_DESCRIPTION,
   appleWebApp: {
     capable: true,
-    title: "Folio",
-    statusBarStyle: "default",
+    title: APP_NAME,
+    statusBarStyle: "black-translucent",
   },
   formatDetection: {
     telephone: false,
@@ -26,21 +40,23 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f5f7" },
-    { media: "(prefers-color-scheme: dark)", color: "#000000" },
-  ],
+  themeColor: "#0E1117",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    // suppressHydrationWarning: the inline script sets data-theme before React
-    // hydrates, so the attribute intentionally differs from the server HTML.
-    <html lang="en" suppressHydrationWarning>
+    // suppressHydrationWarning: the inline script sets theme/gain attributes before React
+    // hydrates so initial paint never flashes.
+    <html
+      lang="en"
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${inter.variable} ${jetbrainsMono.variable}`}
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="min-h-dvh">
+      <body className="min-h-dvh antialiased">
         <Providers>{children}</Providers>
       </body>
     </html>

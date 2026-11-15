@@ -14,6 +14,11 @@
 import { getEnv } from "@/lib/env";
 import { TtlCache } from "@/lib/market-data/cache";
 import { fetchProviderJson, MarketDataError } from "@/lib/market-data/errors";
+import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
+import {
+  searchViaTradingViewSgx,
+  verifyExactViaTradingViewSgx,
+} from "@/lib/market-data/tradingview";
 
 export interface SymbolSearchMatch {
   symbol: string;
@@ -441,6 +446,23 @@ export interface SearchSymbolsOptions {
   skipCache?: boolean;
 }
 
+function mergeSearchMatches(
+  preferred: readonly SymbolSearchMatch[],
+  fallback: readonly SymbolSearchMatch[],
+): SymbolSearchMatch[] {
+  const merged: SymbolSearchMatch[] = [];
+  const seen = new Set<string>();
+  for (const item of [...preferred, ...fallback]) {
+    const key = item.symbol.toUpperCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
 /**
  * Searches live market providers for stocks and ETFs matching `query` by
  * ticker or company name.
@@ -457,12 +479,42 @@ export async function searchSymbols(
   const limit = options.limit ?? 8;
   const allowIndices = options.allowIndices ?? query.startsWith("^");
   const cacheKey = `${query.toLowerCase()}|${allowIndices ? "idx" : "eq"}`;
+  const upperQuery = query.toUpperCase();
+  const isSgxQuery = upperQuery.endsWith(".SI");
+  const queryTransition = getSgxTickerTransition(query);
 
   const executeSearch = async (): Promise<SymbolSearchMatch[]> => {
     let firstError: unknown = null;
 
     try {
       const primary = await searchViaTwelveData(query, options.fetchImpl);
+      const hasExactPrimary = primary.some(
+        (m) => m.symbol.toUpperCase() === upperQuery,
+      );
+      const hasRetiredTransitionMatch = primary.some(
+        (m) => getSgxTickerTransition(m.symbol) !== null,
+      );
+
+      if (
+        (isSgxQuery && !hasExactPrimary) ||
+        hasRetiredTransitionMatch ||
+        queryTransition !== null
+      ) {
+        const tvQuery = queryTransition
+          ? queryTransition.newSymbol
+          : query;
+        const tvMatches = await searchViaTradingViewSgx(
+          tvQuery,
+          options.fetchImpl,
+        ).catch(() => []);
+        if (tvMatches.length > 0) {
+          const activePrimary = primary.filter(
+            (m) => getSgxTickerTransition(m.symbol) === null,
+          );
+          return mergeSearchMatches(tvMatches, activePrimary);
+        }
+      }
+
       if (primary.length > 0 || !allowIndices) {
         return primary;
       }
@@ -486,9 +538,38 @@ export async function searchSymbols(
     }
 
     try {
-      return await searchViaYahoo(query, allowIndices, options.fetchImpl);
+      const yahooMatches = await searchViaYahoo(
+        query,
+        allowIndices,
+        options.fetchImpl,
+      );
+      if (isSgxQuery || yahooMatches.length === 0 || queryTransition) {
+        const tvQuery = queryTransition ? queryTransition.newSymbol : query;
+        const tvMatches = await searchViaTradingViewSgx(
+          tvQuery,
+          options.fetchImpl,
+        ).catch(() => []);
+        if (tvMatches.length > 0) {
+          return mergeSearchMatches(tvMatches, yahooMatches);
+        }
+      }
+      return yahooMatches;
     } catch (error) {
       firstError = firstError ?? error;
+    }
+
+    if (!allowIndices) {
+      try {
+        const tvMatches = await searchViaTradingViewSgx(
+          queryTransition ? queryTransition.newSymbol : query,
+          options.fetchImpl,
+        );
+        if (tvMatches.length > 0) {
+          return tvMatches;
+        }
+      } catch (error) {
+        firstError = firstError ?? error;
+      }
     }
 
     if (firstError instanceof MarketDataError) {
@@ -546,6 +627,17 @@ export async function lookupExactSymbol(
   );
   if (chartVerified) {
     return chartVerified;
+  }
+
+  // Fallback to TradingView Singapore scanner for `.SI` listings.
+  if (needle.endsWith(".SI")) {
+    const tvVerified = await verifyExactViaTradingViewSgx(
+      needle,
+      options.fetchImpl,
+    );
+    if (tvVerified) {
+      return tvVerified;
+    }
   }
 
   if (searchError instanceof MarketDataError) {

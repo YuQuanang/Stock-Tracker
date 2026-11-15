@@ -31,9 +31,9 @@ export function SignOutButton({ iconOnly = false, className = "" }: SignOutButto
       disabled={isSigningOut}
       aria-label="Sign out"
       title="Sign out"
-      className={`flex h-10 items-center gap-3 rounded-[var(--radius-control)] px-3 text-[15px] text-ink-2 transition-colors duration-200 hover:bg-surface-2 hover:text-ink disabled:opacity-50 ${className}`}
+      className={`flex h-10 items-center gap-3 rounded-[10px] px-3 text-[14px] text-ink-2 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-50 ${className}`}
     >
-      <LogOut size={18} strokeWidth={1.75} aria-hidden="true" />
+      <LogOut size={20} strokeWidth={1.75} aria-hidden="true" />
       {!iconOnly && <span>Sign out</span>}
     </button>
   );

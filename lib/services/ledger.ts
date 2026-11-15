@@ -9,7 +9,7 @@
  * so unit and integration tests can run against an isolated in-memory PGlite
  * instance.
  */
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { type Database, getDb } from "@/db/client";
 import {
   corporateAction,
@@ -19,6 +19,7 @@ import {
   portfolio,
   type Portfolio,
   portfolioInstrument,
+  priceBar,
   settings,
   type Settings,
   transaction,
@@ -41,6 +42,7 @@ import {
   toNullableDecimalString,
   ZERO,
 } from "@/lib/finance";
+import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import { type AssetClass, inferInstrumentMetadata } from "@/lib/symbols";
 import { reconcileLedgerPairsSgdTotals } from "@/lib/services/fx-sgd";
 import { evaluateInstrumentAcrossPortfolios } from "@/lib/services/symbol-ledgers";
@@ -167,6 +169,20 @@ export async function updatePortfolio(
     if (!trimmed) {
       throw new LedgerUserError("Portfolio name cannot be empty.", 400);
     }
+
+    const duplicate = await database
+      .select({ id: portfolio.id })
+      .from(portfolio)
+      .where(and(eq(portfolio.name, trimmed), ne(portfolio.id, id)))
+      .limit(1);
+
+    if (duplicate.length > 0) {
+      throw new LedgerUserError(
+        `A portfolio named "${trimmed}" already exists.`,
+        409,
+      );
+    }
+
     updates.name = trimmed;
   }
   if (patch.defaultCurrency !== undefined) {
@@ -174,6 +190,19 @@ export async function updatePortfolio(
   }
   if (patch.sortOrder !== undefined) {
     updates.sortOrder = patch.sortOrder;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    const [existing] = await database
+      .select()
+      .from(portfolio)
+      .where(eq(portfolio.id, id))
+      .limit(1);
+
+    if (!existing) {
+      throw new LedgerUserError("Portfolio not found.", 404);
+    }
+    return existing;
   }
 
   const [updated] = await database
@@ -316,6 +345,283 @@ export async function updateInstrumentOverrides(
     throw new LedgerUserError("Instrument not found.", 404);
   }
   return updated;
+}
+
+export async function migrateInstrumentSymbol(
+  instrumentId: string,
+  input: {
+    targetSymbol: string;
+    targetName?: string | null;
+    applyConsolidationSplit?: boolean;
+    exDate?: string;
+    ratioNumerator?: number;
+    ratioDenominator?: number;
+  },
+  db?: Database,
+): Promise<{
+  instrument: Instrument;
+  previousSymbol: string;
+  appliedSplit: boolean;
+}> {
+  const database = db ?? (await getDb());
+  const appSettings = await getOrCreateSettings(database);
+  const targetSymbol = input.targetSymbol.trim().toUpperCase();
+
+  if (!targetSymbol) {
+    throw new LedgerUserError("Replacement ticker symbol cannot be empty.", 400);
+  }
+
+  return database.transaction(async (txDb) => {
+    const txDatabase = txDb as unknown as Database;
+
+    const [sourceInstr] = await txDatabase
+      .select()
+      .from(instrument)
+      .where(eq(instrument.id, instrumentId))
+      .limit(1);
+
+    if (!sourceInstr) {
+      throw new LedgerUserError("Instrument not found.", 404);
+    }
+
+    const previousSymbol = sourceInstr.symbol;
+    if (previousSymbol.toUpperCase() === targetSymbol) {
+      throw new LedgerUserError(
+        `Instrument is already set to ${targetSymbol}.`,
+        400,
+      );
+    }
+
+    const transition = getSgxTickerTransition(previousSymbol);
+    const applySplitRequested = Boolean(input.applyConsolidationSplit);
+    const splitExDate =
+      input.exDate?.trim() || transition?.effectiveDate || "";
+    const splitNum = input.ratioNumerator ?? transition?.ratioNumerator ?? 0;
+    const splitDen =
+      input.ratioDenominator ?? transition?.ratioDenominator ?? 0;
+
+    if (applySplitRequested) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(splitExDate)) {
+        throw new LedgerUserError(
+          "Consolidation ex-date must be formatted as YYYY-MM-DD.",
+          400,
+        );
+      }
+      if (
+        !Number.isInteger(splitNum) ||
+        !Number.isInteger(splitDen) ||
+        splitNum <= 0 ||
+        splitDen <= 0
+      ) {
+        throw new LedgerUserError(
+          "Consolidation ratio numbers must be positive whole numbers.",
+          400,
+        );
+      }
+    }
+
+    const inferred = inferInstrumentMetadata({
+      symbol: targetSymbol,
+      name:
+        input.targetName?.trim() ||
+        transition?.companyName ||
+        sourceInstr.name,
+    });
+
+    const [existingTarget] = await txDatabase
+      .select()
+      .from(instrument)
+      .where(eq(instrument.symbol, targetSymbol))
+      .limit(1);
+
+    let destination: Instrument;
+
+    // Clear stale retired-counter daily bars so charts & quotes reload clean data
+    // for the replacement ticker without mixing pre-transition bars.
+    await txDatabase
+      .delete(priceBar)
+      .where(eq(priceBar.instrumentId, sourceInstr.id));
+
+    if (!existingTarget) {
+      const nextName =
+        input.targetName?.trim() ||
+        transition?.companyName ||
+        sourceInstr.name;
+      const [renamed] = await txDatabase
+        .update(instrument)
+        .set({
+          symbol: targetSymbol,
+          name: nextName,
+          exchangeCode: inferred.exchangeCode ?? sourceInstr.exchangeCode,
+          currency: inferred.currency,
+          assetType:
+            inferred.assetType === "unknown"
+              ? sourceInstr.assetType
+              : inferred.assetType,
+          manualPrice: null,
+          priceNotFoundAt: null,
+          priceNotFoundReason: null,
+        })
+        .where(eq(instrument.id, sourceInstr.id))
+        .returning();
+
+      destination = renamed;
+    } else {
+      await txDatabase
+        .update(transaction)
+        .set({ instrumentId: existingTarget.id, updatedAt: new Date() })
+        .where(eq(transaction.instrumentId, sourceInstr.id));
+
+      const sourceLinks = await txDatabase
+        .select()
+        .from(portfolioInstrument)
+        .where(eq(portfolioInstrument.instrumentId, sourceInstr.id));
+
+      const targetLinks = await txDatabase
+        .select()
+        .from(portfolioInstrument)
+        .where(eq(portfolioInstrument.instrumentId, existingTarget.id));
+
+      const targetByPortfolio = new Map(
+        targetLinks.map((link) => [link.portfolioId, link]),
+      );
+
+      for (const link of sourceLinks) {
+        const existingLink = targetByPortfolio.get(link.portfolioId);
+        if (!existingLink) {
+          await txDatabase
+            .update(portfolioInstrument)
+            .set({ instrumentId: existingTarget.id })
+            .where(
+              and(
+                eq(portfolioInstrument.portfolioId, link.portfolioId),
+                eq(portfolioInstrument.instrumentId, sourceInstr.id),
+              ),
+            );
+        } else {
+          await txDatabase
+            .update(portfolioInstrument)
+            .set({
+              priceWhenAdded:
+                existingLink.priceWhenAdded ?? link.priceWhenAdded,
+              alertAbove: existingLink.alertAbove ?? link.alertAbove,
+              alertBelow: existingLink.alertBelow ?? link.alertBelow,
+              paperEntryDate:
+                existingLink.paperEntryDate ?? link.paperEntryDate,
+              paperAmount: existingLink.paperAmount ?? link.paperAmount,
+              paperShares: existingLink.paperShares ?? link.paperShares,
+            })
+            .where(
+              and(
+                eq(portfolioInstrument.portfolioId, existingLink.portfolioId),
+                eq(portfolioInstrument.instrumentId, existingTarget.id),
+              ),
+            );
+          await txDatabase
+            .delete(portfolioInstrument)
+            .where(
+              and(
+                eq(portfolioInstrument.portfolioId, link.portfolioId),
+                eq(portfolioInstrument.instrumentId, sourceInstr.id),
+              ),
+            );
+        }
+      }
+
+      const sourceActions = await txDatabase
+        .select()
+        .from(corporateAction)
+        .where(eq(corporateAction.instrumentId, sourceInstr.id));
+      const existingActions = await txDatabase
+        .select()
+        .from(corporateAction)
+        .where(eq(corporateAction.instrumentId, existingTarget.id));
+
+      const actionKeys = new Set(
+        existingActions.map(
+          (a) => `${a.exDate}|${a.ratioNumerator}|${a.ratioDenominator}`,
+        ),
+      );
+
+      for (const action of sourceActions) {
+        const key = `${action.exDate}|${action.ratioNumerator}|${action.ratioDenominator}`;
+        if (!actionKeys.has(key)) {
+          await txDatabase
+            .update(corporateAction)
+            .set({ instrumentId: existingTarget.id })
+            .where(eq(corporateAction.id, action.id));
+          actionKeys.add(key);
+        }
+      }
+
+      const [updatedTarget] = await txDatabase
+        .update(instrument)
+        .set({
+          name:
+            existingTarget.name ??
+            input.targetName?.trim() ??
+            transition?.companyName ??
+            sourceInstr.name,
+          priceNotFoundAt: null,
+          priceNotFoundReason: null,
+        })
+        .where(eq(instrument.id, existingTarget.id))
+        .returning();
+
+      await txDatabase
+        .delete(instrument)
+        .where(eq(instrument.id, sourceInstr.id));
+
+      destination = updatedTarget ?? existingTarget;
+    }
+
+    let appliedSplit = false;
+    if (applySplitRequested) {
+      const existingSplits = await txDatabase
+        .select()
+        .from(corporateAction)
+        .where(eq(corporateAction.instrumentId, destination.id));
+
+      const hasMatchingSplit = existingSplits.some(
+        (s) =>
+          s.exDate === splitExDate &&
+          s.ratioNumerator === splitNum &&
+          s.ratioDenominator === splitDen,
+      );
+
+      if (!hasMatchingSplit) {
+        await txDatabase.insert(corporateAction).values({
+          instrumentId: destination.id,
+          exDate: splitExDate,
+          type: "split",
+          ratioNumerator: splitNum,
+          ratioDenominator: splitDen,
+        });
+        appliedSplit = true;
+      }
+    }
+
+    const affectedPortfolios = await txDatabase
+      .selectDistinct({ portfolioId: transaction.portfolioId })
+      .from(transaction)
+      .where(eq(transaction.instrumentId, destination.id));
+
+    if (affectedPortfolios.length > 0) {
+      await assertInstrumentLedgerValid({
+        database: txDatabase,
+        portfolioId: affectedPortfolios[0].portfolioId,
+        instrumentId: destination.id,
+        symbol: destination.symbol,
+        dividendMode: appSettings.dividendMode,
+      });
+    }
+
+    return {
+      instrument: destination,
+      previousSymbol,
+      appliedSplit,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

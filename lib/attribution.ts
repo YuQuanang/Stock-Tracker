@@ -37,5 +37,5 @@ export const DATA_ATTRIBUTIONS: DataAttribution[] = [
 ];
 
 export const DISCLAIMER_TEXT =
-  "Folio is a personal record-keeping tool, not financial advice. Prices may be delayed or unavailable; always verify against your broker.";
+  "Kestrel is a personal record-keeping tool, not financial advice. Prices may be delayed or unavailable; always verify against your broker.";
 

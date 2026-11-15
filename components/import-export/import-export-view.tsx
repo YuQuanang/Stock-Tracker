@@ -314,7 +314,7 @@ export function ImportExportView({
       {errorMessage && (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-[14px] border border-loss/35 bg-loss/8 px-4 py-3.5 text-[14px] text-loss"
+          className="flex items-start gap-3 rounded-[12px] border border-loss/35 bg-loss/8 px-4 py-3.5 text-[14px] text-loss"
         >
           <AlertCircle className="mt-0.5 h-4.5 w-4.5 shrink-0" />
           <div className="min-w-0 flex-1 leading-relaxed">{errorMessage}</div>
@@ -322,7 +322,7 @@ export function ImportExportView({
             type="button"
             onClick={() => setErrorMessage(null)}
             aria-label="Dismiss error"
-            className="rounded-full p-1 text-loss/80 hover:bg-loss/10 hover:text-loss"
+            className="rounded-[10px] p-1 text-loss/80 transition-colors hover:bg-loss/10 hover:text-loss"
           >
             <X className="h-4 w-4" />
           </button>
@@ -333,17 +333,17 @@ export function ImportExportView({
       {undoFeedback && (
         <div
           role="status"
-          className="flex items-center justify-between gap-3 rounded-[14px] border border-gain/30 bg-gain/8 px-4 py-3 text-[14px] text-gain"
+          className="flex items-center justify-between gap-3 rounded-[12px] border border-accent/30 bg-accent/10 px-4 py-3 text-[14px] text-accent"
         >
           <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="h-4.5 w-4.5 shrink-0" />
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
             <span>{undoFeedback}</span>
           </div>
           <button
             type="button"
             onClick={() => setUndoFeedback(null)}
             aria-label="Dismiss message"
-            className="rounded-full p-1 text-gain/80 hover:bg-gain/10 hover:text-gain"
+            className="rounded-[10px] p-1 text-accent/80 transition-colors hover:bg-accent/15 hover:text-accent"
           >
             <X className="h-4 w-4" />
           </button>
@@ -355,7 +355,7 @@ export function ImportExportView({
         <Card className="p-5 sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gain/12 text-gain">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-accent/12 text-accent">
                 <CheckCircle2 className="h-5 w-5" />
               </div>
               <div>
@@ -390,8 +390,8 @@ export function ImportExportView({
           </div>
 
           {commitResult.unresolvedSymbols.length > 0 && (
-            <div className="mt-4 rounded-[14px] border border-line bg-field-bg p-4">
-              <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+            <div className="mt-4 rounded-[12px] border border-line bg-field-bg p-4">
+              <p className="text-[12px] font-medium text-ink-2">
                 Symbol Resolution Notes ({commitResult.unresolvedSymbols.length})
               </p>
               <p className="mt-1 text-[13px] text-ink-2">
@@ -433,7 +433,7 @@ export function ImportExportView({
                 <code className="rounded bg-field-bg px-1.5 py-0.5 font-mono text-[12px] text-ink">
                   MSP-Portfolios-*.csv
                 </code>
-                ) or Folio&rsquo;s plain spreadsheet template.
+                ) or Kestrel&rsquo;s plain spreadsheet template.
               </p>
             </div>
             <div className="mt-3 sm:mt-0">
@@ -451,10 +451,10 @@ export function ImportExportView({
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`mt-5 flex flex-col items-center justify-center rounded-[16px] border border-dashed px-5 py-9 text-center transition-colors duration-150 ${
+            className={`mt-5 flex flex-col items-center justify-center rounded-[12px] border border-dashed px-5 py-9 text-center transition-colors duration-150 ${
               isDragging
-                ? "border-accent bg-accent/6"
-                : "border-line bg-field-bg/60 hover:bg-field-bg"
+                ? "border-accent bg-accent/10"
+                : "border-line bg-field-bg hover:bg-surface-2"
             }`}
           >
             <input
@@ -465,7 +465,7 @@ export function ImportExportView({
               className="sr-only"
               aria-label="Choose CSV file to preview"
             />
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface shadow-xs">
+            <div className="flex h-12 w-12 items-center justify-center rounded-[12px] border border-line bg-surface">
               <FileUp className="h-5 w-5 text-accent" />
             </div>
             <p className="mt-3.5 text-[15px] font-medium text-ink">
@@ -473,7 +473,7 @@ export function ImportExportView({
                 ? "Inspecting CSV rows and verifying FIFO ledger…"
                 : "Drop your CSV file here, or choose a file to preview"}
             </p>
-            <p className="mt-1 max-w-md text-[13px] text-ink-3">
+            <p className="mt-1 max-w-md text-[13px] text-ink-2">
               Nothing is saved immediately. You will review portfolios, row
               counts, duplicates, and any validation warnings first.
             </p>
@@ -500,7 +500,7 @@ export function ImportExportView({
                   <h2 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-ink">
                     Preview: {selectedFilename}
                   </h2>
-                  <span className="inline-flex items-center rounded-full border border-line bg-field-bg px-2.5 py-0.5 text-[12px] font-medium text-ink-2">
+                  <span className="inline-flex items-center rounded-[6px] border border-line bg-field-bg px-2.5 py-0.5 text-[12px] font-medium text-ink-2">
                     {preview.format === "msp"
                       ? "Microsoft Start 19-Column"
                       : "Plain Template"}
@@ -525,30 +525,30 @@ export function ImportExportView({
           <div className="space-y-6 p-5 sm:p-6">
             {/* Summary metrics grid */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-[14px] border border-line bg-field-bg p-3.5">
-                <p className="text-[12px] font-medium text-ink-3">Portfolios</p>
+              <div className="rounded-[12px] border border-line bg-field-bg p-3.5">
+                <p className="text-[12px] font-medium text-ink-2">Portfolios</p>
                 <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-ink num">
                   {preview.portfolios.length}
                 </p>
               </div>
-              <div className="rounded-[14px] border border-line bg-field-bg p-3.5">
-                <p className="text-[12px] font-medium text-ink-3">
+              <div className="rounded-[12px] border border-line bg-field-bg p-3.5">
+                <p className="text-[12px] font-medium text-ink-2">
                   Unique Symbols
                 </p>
                 <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-ink num">
                   {preview.detectedSymbols.length}
                 </p>
               </div>
-              <div className="rounded-[14px] border border-line bg-field-bg p-3.5">
-                <p className="text-[12px] font-medium text-ink-3">
+              <div className="rounded-[12px] border border-line bg-field-bg p-3.5">
+                <p className="text-[12px] font-medium text-ink-2">
                   Valid Transactions
                 </p>
                 <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-ink num">
                   {preview.transactionCount}
                 </p>
               </div>
-              <div className="rounded-[14px] border border-line bg-field-bg p-3.5">
-                <p className="text-[12px] font-medium text-ink-3">
+              <div className="rounded-[12px] border border-line bg-field-bg p-3.5">
+                <p className="text-[12px] font-medium text-ink-2">
                   Symbol Placeholders
                 </p>
                 <p className="mt-1 text-[22px] font-semibold tracking-[-0.02em] text-ink num">
@@ -560,22 +560,22 @@ export function ImportExportView({
             {/* Counts by transaction type */}
             <div className="flex flex-wrap items-center gap-2 text-[13px] num">
               <span className="font-medium text-ink-2">By type:</span>
-              <span className="rounded-full border border-line bg-field-bg px-3 py-1 text-ink">
+              <span className="rounded-[6px] border border-line bg-field-bg px-2.5 py-1 text-ink">
                 Buy: <strong>{preview.typeCounts.Buy}</strong>
               </span>
-              <span className="rounded-full border border-line bg-field-bg px-3 py-1 text-ink">
+              <span className="rounded-[6px] border border-line bg-field-bg px-2.5 py-1 text-ink">
                 Sell: <strong>{preview.typeCounts.Sell}</strong>
               </span>
-              <span className="rounded-full border border-line bg-field-bg px-3 py-1 text-ink">
+              <span className="rounded-[6px] border border-line bg-field-bg px-2.5 py-1 text-ink">
                 Sell All: <strong>{preview.typeCounts["Sell All"]}</strong>
               </span>
-              <span className="rounded-full border border-line bg-field-bg px-3 py-1 text-ink">
+              <span className="rounded-[6px] border border-line bg-field-bg px-2.5 py-1 text-ink">
                 Dividend: <strong>{preview.typeCounts.Dividend}</strong>
               </span>
             </div>
 
             {/* Duplicate handling control */}
-            <div className="rounded-[15px] border border-line bg-surface-2/45 p-4">
+            <div className="rounded-[12px] border border-line bg-surface-2 p-4">
               <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[13px] font-semibold text-ink">
                   Duplicate handling
@@ -606,12 +606,12 @@ export function ImportExportView({
               </h3>
 
               {/* Mobile inset list */}
-              <div className="divide-y divide-line rounded-[14px] border border-line bg-field-bg/50 sm:hidden">
+              <div className="divide-y divide-line rounded-[12px] border border-line bg-field-bg sm:hidden">
                 {preview.portfolios.map((p) => (
                   <div key={p.name} className="space-y-1.5 p-3.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold text-ink">{p.name}</span>
-                      <span className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-[11px] font-medium capitalize text-ink-2">
+                      <span className="rounded-[6px] border border-line bg-surface px-2.5 py-0.5 text-[11px] font-medium capitalize text-ink-2">
                         {p.inferredType} · {p.defaultCurrency}
                       </span>
                     </div>
@@ -629,10 +629,10 @@ export function ImportExportView({
               </div>
 
               {/* Desktop table */}
-              <div className="hidden overflow-hidden rounded-[14px] border border-line sm:block">
+              <div className="hidden overflow-hidden rounded-[12px] border border-line sm:block">
                 <table className="w-full border-collapse text-left text-[13.5px]">
                   <thead>
-                    <tr className="border-b border-line bg-field-bg text-[12px] font-medium text-ink-3">
+                    <tr className="border-b border-line bg-field-bg text-[12px] font-medium text-ink-2">
                       <th className="px-4 py-2.5">Portfolio</th>
                       <th className="px-4 py-2.5">Kind</th>
                       <th className="px-4 py-2.5">Currency</th>
@@ -647,7 +647,7 @@ export function ImportExportView({
                         <td className="px-4 py-2.5 font-medium text-ink">
                           {p.name}
                           {p.alreadyExists && (
-                            <span className="ml-2 text-[11.5px] font-normal text-ink-3">
+                            <span className="ml-2 text-[11.5px] font-normal text-ink-2">
                               (existing)
                             </span>
                           )}
@@ -655,7 +655,7 @@ export function ImportExportView({
                         <td className="px-4 py-2.5 capitalize text-ink-2">
                           {p.inferredType}
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-[12.5px] text-ink-2">
+                        <td className="px-4 py-2.5 text-[12.5px] text-ink-2">
                           {p.defaultCurrency}
                         </td>
                         <td className="px-4 py-2.5 text-right text-ink num">
@@ -676,12 +676,12 @@ export function ImportExportView({
 
             {/* Rejected rows callout + Download Rejected Rows CSV */}
             {preview.rejectedRows.length > 0 && (
-              <div className="rounded-[15px] border border-loss/35 bg-loss/6 p-4">
+              <div className="rounded-[12px] border border-line bg-field-bg p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-2.5">
-                    <AlertCircle className="mt-0.5 h-4.5 w-4.5 shrink-0 text-loss" />
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
                     <div>
-                      <h3 className="text-[14px] font-semibold text-loss num">
+                      <h3 className="text-[14px] font-semibold text-ink num">
                         {preview.rejectedRows.length} invalid{" "}
                         {preview.rejectedRows.length === 1 ? "row" : "rows"}{" "}
                         will be skipped
@@ -702,19 +702,19 @@ export function ImportExportView({
                   </Button>
                 </div>
 
-                <ul className="mt-3 max-h-52 divide-y divide-line overflow-y-auto rounded-[11px] border border-line bg-surface px-3.5 py-1 text-[12.5px]">
+                <ul className="mt-3 max-h-52 divide-y divide-line overflow-y-auto rounded-[10px] border border-line bg-surface px-3.5 py-1 text-[12.5px]">
                   {preview.rejectedRows.map((err) => (
                     <li key={err.lineNumber} className="py-2">
-                      <span className="font-mono font-semibold text-loss num">
+                      <span className="font-semibold text-ink num">
                         Line {err.lineNumber}
                       </span>
                       {err.symbol ? (
-                        <span className="ml-2 font-medium text-ink">
+                        <span className="ml-2 font-mono font-medium text-ink">
                           {err.symbol}
                         </span>
                       ) : null}
                       {err.portfolio ? (
-                        <span className="ml-1.5 text-ink-3">
+                        <span className="ml-1.5 text-ink-2">
                           ({err.portfolio})
                         </span>
                       ) : null}
@@ -727,7 +727,7 @@ export function ImportExportView({
 
             {/* Non-blocking warnings */}
             {preview.warnings.length > 0 && (
-              <div className="rounded-[15px] border border-line bg-field-bg/70 p-4">
+              <div className="rounded-[12px] border border-line bg-field-bg p-4">
                 <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink">
                   <TriangleAlert className="h-4 w-4 text-accent" />
                   <span className="num">
@@ -751,14 +751,14 @@ export function ImportExportView({
                 </h3>
 
                 {/* Mobile sample list */}
-                <div className="divide-y divide-line rounded-[14px] border border-line bg-field-bg/40 sm:hidden">
+                <div className="divide-y divide-line rounded-[12px] border border-line bg-field-bg sm:hidden">
                   {preview.sampleRows.map((row) => (
                     <div key={row.lineNumber} className="space-y-1 p-3 text-[12.5px]">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono font-semibold text-ink">
                           {row.symbol}
                         </span>
-                        <span className="rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-2">
+                        <span className="rounded-[6px] border border-line bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-2">
                           {row.kind}
                         </span>
                       </div>
@@ -775,10 +775,10 @@ export function ImportExportView({
                 </div>
 
                 {/* Desktop sample table */}
-                <div className="hidden overflow-x-auto rounded-[14px] border border-line sm:block">
+                <div className="hidden overflow-x-auto rounded-[12px] border border-line sm:block">
                   <table className="w-full border-collapse text-left text-[13px]">
                     <thead>
-                      <tr className="border-b border-line bg-field-bg text-[11.5px] font-medium text-ink-3">
+                      <tr className="border-b border-line bg-field-bg text-[12px] font-medium text-ink-2">
                         <th className="px-3.5 py-2">Line</th>
                         <th className="px-3.5 py-2">Portfolio</th>
                         <th className="px-3.5 py-2">Symbol</th>
@@ -791,7 +791,7 @@ export function ImportExportView({
                     <tbody className="divide-y divide-line bg-surface num">
                       {preview.sampleRows.map((row) => (
                         <tr key={row.lineNumber}>
-                          <td className="px-3.5 py-2 font-mono text-[12px] text-ink-3">
+                          <td className="px-3.5 py-2 text-[12px] text-ink-2">
                             {row.lineNumber}
                           </td>
                           <td className="px-3.5 py-2 text-ink-2">
@@ -809,7 +809,9 @@ export function ImportExportView({
                               ? "—"
                               : `${row.price} ${row.currency}`}
                           </td>
-                          <td className="px-3.5 py-2 text-ink-2">{row.date}</td>
+                          <td className="px-3.5 py-2 font-mono text-[12px] text-ink-2">
+                            {row.date}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -877,17 +879,17 @@ export function ImportExportView({
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-2" />
             </div>
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-3.5 md:grid-cols-3">
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
           {/* Original MSP Format */}
-          <div className="flex flex-col justify-between rounded-[16px] border border-line bg-field-bg/60 p-4">
+          <div className="flex flex-col justify-between rounded-[12px] border border-line bg-field-bg p-4">
             <div>
               <div className="flex items-center gap-2 text-[15px] font-semibold text-ink">
-                <FileSpreadsheet className="h-4.5 w-4.5 text-accent" />
+                <FileSpreadsheet className="h-4 w-4 text-accent" />
                 <span>Original Format (MSP CSV)</span>
               </div>
               <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
@@ -899,7 +901,7 @@ export function ImportExportView({
             <div className="mt-4">
               <a
                 href={`/api/import-export/export?format=msp${portfolioQueryParam}`}
-                className={getButtonClasses("primary", "w-full")}
+                className={getButtonClasses("secondary", "w-full")}
               >
                 <ArrowDownToLine className="h-4 w-4" />
                 Export MSP CSV
@@ -908,10 +910,10 @@ export function ImportExportView({
           </div>
 
           {/* One-Click Full Backup */}
-          <div className="flex flex-col justify-between rounded-[16px] border border-line bg-field-bg/60 p-4">
+          <div className="flex flex-col justify-between rounded-[12px] border border-line bg-field-bg p-4">
             <div>
               <div className="flex items-center gap-2 text-[15px] font-semibold text-ink">
-                <DatabaseBackup className="h-4.5 w-4.5 text-accent" />
+                <DatabaseBackup className="h-4 w-4 text-accent" />
                 <span>One-Click Full Backup</span>
               </div>
               <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
@@ -931,10 +933,10 @@ export function ImportExportView({
           </div>
 
           {/* Clean Modern CSV */}
-          <div className="flex flex-col justify-between rounded-[16px] border border-line bg-field-bg/60 p-4">
+          <div className="flex flex-col justify-between rounded-[12px] border border-line bg-field-bg p-4">
             <div>
               <div className="flex items-center gap-2 text-[15px] font-semibold text-ink">
-                <ArrowDownToLine className="h-4.5 w-4.5 text-accent" />
+                <ArrowDownToLine className="h-4 w-4 text-accent" />
                 <span>Clean Spreadsheet CSV</span>
               </div>
               <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
@@ -958,7 +960,7 @@ export function ImportExportView({
       {/* 4. Import History & Undo Card */}
       <Card className="p-5 sm:p-6">
         <div className="flex items-center gap-2">
-          <History className="h-4.5 w-4.5 text-ink-2" />
+          <History className="h-4 w-4 text-ink-2" />
           <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-ink">
             Import History
           </h2>
@@ -969,11 +971,11 @@ export function ImportExportView({
         </p>
 
         {importLogs.length === 0 ? (
-          <div className="mt-4 rounded-[14px] border border-line bg-field-bg/50 px-4 py-6 text-center text-[13.5px] text-ink-3">
+          <div className="mt-4 rounded-[12px] border border-line bg-field-bg px-4 py-6 text-center text-[13.5px] text-ink-2">
             No CSV imports have been run yet.
           </div>
         ) : (
-          <div className="mt-4 divide-y divide-line rounded-[15px] border border-line bg-field-bg/40">
+          <div className="mt-4 divide-y divide-line rounded-[12px] border border-line bg-field-bg">
             {importLogs.map((log) => {
               const isUndone = log.status === "undone";
               const isConfirming = confirmUndoId === log.id;
@@ -992,22 +994,32 @@ export function ImportExportView({
                         {log.filename}
                       </span>
                       <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11.5px] font-medium ${
+                        className={`inline-flex items-center rounded-[6px] px-2 py-0.5 text-[11.5px] font-medium ${
                           isUndone
-                            ? "border border-line bg-surface text-ink-3"
-                            : "bg-gain/14 text-gain"
+                            ? "border border-line bg-surface text-ink-2"
+                            : "bg-accent/12 text-accent"
                         }`}
                       >
                         {isUndone ? "Undone" : "Committed"}
                       </span>
                     </div>
                     <p className="text-[12.5px] text-ink-2 num">
-                      {formatSgtTimestamp(log.createdAt)} SGT · {txCount}{" "}
-                      transactions imported
+                      <span className="font-mono">
+                        {formatSgtTimestamp(log.createdAt)} SGT
+                      </span>{" "}
+                      · {txCount} transactions imported
                       {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
-                      {isUndone && log.undoneAt
-                        ? ` · Undone ${formatSgtTimestamp(log.undoneAt)}`
-                        : ""}
+                      {isUndone && log.undoneAt ? (
+                        <>
+                          {" "}
+                          · Undone{" "}
+                          <span className="font-mono">
+                            {formatSgtTimestamp(log.undoneAt)}
+                          </span>
+                        </>
+                      ) : (
+                        ""
+                      )}
                     </p>
                   </div>
 
@@ -1026,7 +1038,6 @@ export function ImportExportView({
                             variant="secondary"
                             disabled={isBusy}
                             onClick={() => void handleUndoImport(log.id)}
-                            className="border-loss/40 text-loss hover:bg-loss/10"
                           >
                             {isBusy ? "Undoing…" : "Confirm Undo"}
                           </Button>

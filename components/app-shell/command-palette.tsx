@@ -86,7 +86,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 px-4 pt-[15vh]"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-[#0E1117]/80 px-4 pt-[15vh]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -97,7 +97,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             role="dialog"
             aria-modal="true"
             aria-label="Command palette"
-            className="material w-full max-w-lg overflow-hidden rounded-[var(--radius-card)] border border-line shadow-raised"
+            className="w-full max-w-lg overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface shadow-raised"
             initial={{ opacity: 0, y: -8, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.985 }}
@@ -105,7 +105,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center gap-3 border-b border-line px-4">
-              <Search size={18} strokeWidth={1.75} className="text-ink-3" aria-hidden="true" />
+              <Search size={18} strokeWidth={1.75} className="text-ink-2" aria-hidden="true" />
               <input
                 ref={inputRef}
                 value={query}
@@ -121,13 +121,13 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                 aria-activedescendant={
                   matches[highlightedIndex] ? `command-option-${highlightedIndex}` : undefined
                 }
-                className="h-14 flex-1 bg-transparent text-[17px] outline-none placeholder:text-ink-3"
+                className="h-12 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-ink-3"
               />
             </div>
 
             <ul id="command-palette-list" role="listbox" className="max-h-80 overflow-y-auto p-2">
               {matches.length === 0 && (
-                <li className="px-3 py-6 text-center text-[15px] text-ink-3">
+                <li className="px-3 py-6 text-center text-[14px] text-ink-2">
                   Nothing matches “{query}”. Try a page name such as Holdings.
                 </li>
               )}
@@ -141,14 +141,14 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                     aria-selected={isHighlighted}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => goTo(href)}
-                    className={`flex h-11 cursor-pointer items-center gap-3 rounded-[var(--radius-control)] px-3 text-[15px] ${
+                    className={`flex h-10 cursor-pointer items-center gap-3 rounded-[10px] px-3 text-[14px] ${
                       isHighlighted ? "bg-surface-2 text-ink" : "text-ink-2"
                     }`}
                   >
-                    <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+                    <Icon size={20} strokeWidth={1.75} className={isHighlighted ? "text-accent" : "text-ink-2"} aria-hidden="true" />
                     <span className="flex-1 font-medium">{label}</span>
                     {isHighlighted && (
-                      <CornerDownLeft size={14} className="text-ink-3" aria-hidden="true" />
+                      <CornerDownLeft size={16} className="text-ink-2" aria-hidden="true" />
                     )}
                   </li>
                 );

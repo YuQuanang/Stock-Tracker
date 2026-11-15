@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
-import { PageHeader } from "@/components/ui/page-header";
 import { CORE_COMPARISON_BENCHMARKS } from "@/lib/benchmarks/summary";
 import { computePortfolioAnalytics } from "@/lib/services/analytics";
 
@@ -17,15 +16,9 @@ export default async function DashboardPage() {
   });
 
   return (
-    <>
-      <PageHeader
-        title="Dashboard"
-        subtitle="Real-time FIFO portfolio valuation, allocation breakdown, and risk-adjusted performance."
-      />
-      <DashboardView
-        initialSnapshot={initialSnapshot}
-        hydrateLiveOnMount={!initialSnapshot.accountHasNoTransactions}
-      />
-    </>
+    <DashboardView
+      initialSnapshot={initialSnapshot}
+      hydrateLiveOnMount={!initialSnapshot.accountHasNoTransactions}
+    />
   );
 }

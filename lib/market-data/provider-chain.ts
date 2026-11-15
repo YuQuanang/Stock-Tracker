@@ -158,20 +158,31 @@ export class ProviderChain {
     const healthySteps = steps.filter(
       (step) => !this.isCircuitOpen(step.provider, nowMs),
     );
+    const openSteps = steps.filter((step) =>
+      this.isCircuitOpen(step.provider, nowMs),
+    );
+    const earliestOpenStep =
+      openSteps.length > 0
+        ? [...openSteps].sort((left, right) => {
+            const leftUntil =
+              this.circuits.get(left.provider.toLowerCase())?.openUntilMs ?? 0;
+            const rightUntil =
+              this.circuits.get(right.provider.toLowerCase())?.openUntilMs ?? 0;
+            return leftUntil - rightUntil;
+          })[0]
+        : null;
 
-    // If all providers are cooling down, probe the one closest to recovery.
+    // Try healthy providers in priority order; if every healthy provider fails
+    // (or all providers are cooling down), probe the open provider whose
+    // cooldown expires soonest so recovery happens automatically.
     const stepsToTry: ProviderStep<T>[] =
       healthySteps.length > 0
-        ? healthySteps
-        : [
-            [...steps].sort((left, right) => {
-              const leftUntil =
-                this.circuits.get(left.provider.toLowerCase())?.openUntilMs ?? 0;
-              const rightUntil =
-                this.circuits.get(right.provider.toLowerCase())?.openUntilMs ?? 0;
-              return leftUntil - rightUntil;
-            })[0],
-          ];
+        ? earliestOpenStep
+          ? [...healthySteps, earliestOpenStep]
+          : healthySteps
+        : earliestOpenStep
+          ? [earliestOpenStep]
+          : [];
 
     let primaryError: unknown = null;
 

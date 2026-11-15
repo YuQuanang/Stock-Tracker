@@ -27,34 +27,6 @@ const CRYPTO_EXCHANGES = new Set(["CCC", "CRYPTOCOMPARE"]);
 const INDEX_EXCHANGES = new Set(["DJI", "SNP", "NIM", "SES_INDEX"]);
 const SGX_EXCHANGES = new Set(["SES", "SGX"]);
 
-const KNOWN_ETFS = new Set([
-  "SPY",
-  "QQQ",
-  "VOO",
-  "VTI",
-  "IVV",
-  "GLD",
-  "SLV",
-  "JEPI",
-  "JEPQ",
-  "SCHD",
-  "ES3.SI",
-  "G3B.SI",
-  "CLR.SI",
-  "CFA.SI",
-  "OVQ.SI",
-  "HYDD.SI",
-]);
-
-const KNOWN_SGX_REITS = new Set([
-  "A17U.SI",
-  "C38U.SI",
-  "J91U.SI",
-  "M44U.SI",
-  "ME8U.SI",
-  "N2IU.SI",
-]);
-
 /**
  * Infers instrument metadata when creating a symbol from manual entry or CSV
  * import, honouring any explicit exchange or currency provided by the caller.
@@ -105,14 +77,10 @@ export function inferInstrumentMetadata(params: {
       /^[A-Z0-9]{2,10}-(USD|SGD)$/.test(upperSymbol)
     ) {
       assetType = "crypto";
-    } else if (KNOWN_ETFS.has(upperSymbol) || /\betf\b/.test(lowerName)) {
+    } else if (upperExchange === "PCX" || /\betf\b/.test(lowerName)) {
       assetType = "etf";
-    } else if (
-      KNOWN_SGX_REITS.has(upperSymbol) ||
-      /\breit\b/.test(lowerName) ||
-      upperExchange === "PCX"
-    ) {
-      assetType = upperExchange === "PCX" ? "etf" : "reit";
+    } else if (/\breit\b/.test(lowerName)) {
+      assetType = "reit";
     } else if (exchangeCode !== null || /^[A-Z0-9.]+$/.test(upperSymbol)) {
       assetType = "stock";
     }

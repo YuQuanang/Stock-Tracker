@@ -9,7 +9,7 @@ export default function AppRouteLoading() {
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-4 w-72 max-w-full" />
         </div>
-        <Skeleton className="h-9 w-32 rounded-full" />
+        <Skeleton className="h-9 w-32 rounded-[10px]" />
       </div>
 
       <Card className="space-y-4 p-5 sm:p-6">
@@ -24,7 +24,7 @@ export default function AppRouteLoading() {
                 <Skeleton className="h-4 w-36" />
                 <Skeleton className="h-3.5 w-52 max-w-full" />
               </div>
-              <Skeleton className="h-8 w-24 rounded-full" />
+              <Skeleton className="h-8 w-24 rounded-[10px]" />
             </div>
           ))}
         </div>

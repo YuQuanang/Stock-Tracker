@@ -369,3 +369,36 @@ export function getCombinedMarketOverview(
   };
 }
 
+const MONTH_SHORT_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+/** Formats `2026-11-06` into `"6 Nov"` (same year) or `"6 Nov 2021"` (past year). */
+export function formatShortMarketDate(
+  isoDate: string,
+  referenceYear?: number,
+): string {
+  const [yearStr, monthStr, dayStr] = isoDate.split("-");
+  const year = Number(yearStr);
+  const monthIndex = Number(monthStr) - 1;
+  const day = Number(dayStr);
+  const monthLabel = MONTH_SHORT_NAMES[monthIndex] ?? monthStr;
+  const currentYear = referenceYear ?? new Date().getUTCFullYear();
+
+  if (year === currentYear) {
+    return `${day} ${monthLabel}`;
+  }
+  return `${day} ${monthLabel} ${year}`;
+}
+

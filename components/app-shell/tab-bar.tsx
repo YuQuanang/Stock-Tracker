@@ -25,7 +25,7 @@ export function TabBar() {
     <LayoutGroup id="mobile-tabbar">
       <nav
         aria-label="Mobile navigation"
-        className="material fixed inset-x-0 bottom-0 z-30 border-t border-line pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden"
       >
         <ul className="mx-auto flex max-w-md items-stretch justify-around px-1">
           {tabItems.map(({ href, label, Icon }) => {
@@ -42,22 +42,22 @@ export function TabBar() {
                   }}
                   aria-current={isActive ? "page" : undefined}
                   className={`relative flex h-[54px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors duration-150 ${
-                    isActive ? "text-accent" : "text-ink-3"
+                    isActive ? "text-accent" : "text-ink-2"
                   }`}
                 >
                   {isActive && (
                     <motion.span
                       layoutId="tabbar-active-pill"
                       transition={springSnappy}
-                      className="pointer-events-none absolute inset-x-1.5 inset-y-1.5 rounded-[12px] bg-accent/10"
+                      className="pointer-events-none absolute inset-x-1.5 inset-y-1.5 rounded-[10px] border border-accent/25 bg-accent/10"
                     />
                   )}
                   <motion.span
-                    whileTap={{ scale: 0.88 }}
+                    whileTap={{ scale: 0.9 }}
                     transition={springSnappy}
                     className="relative z-10"
                   >
-                    <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
+                    <Icon size={20} strokeWidth={1.75} aria-hidden="true" />
                   </motion.span>
                   <span className="relative z-10">{label}</span>
                 </Link>
@@ -74,22 +74,22 @@ export function TabBar() {
               }}
               aria-current={effectivePathname === "/more" ? "page" : undefined}
               className={`relative flex h-[54px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors duration-150 ${
-                moreIsActive ? "text-accent" : "text-ink-3"
+                moreIsActive ? "text-accent" : "text-ink-2"
               }`}
             >
               {moreIsActive && (
                 <motion.span
                   layoutId="tabbar-active-pill"
                   transition={springSnappy}
-                  className="pointer-events-none absolute inset-x-1.5 inset-y-1.5 rounded-[12px] bg-accent/10"
+                  className="pointer-events-none absolute inset-x-1.5 inset-y-1.5 rounded-[10px] border border-accent/25 bg-accent/10"
                 />
               )}
               <motion.span
-                whileTap={{ scale: 0.88 }}
+                whileTap={{ scale: 0.9 }}
                 transition={springSnappy}
                 className="relative z-10"
               >
-                <Ellipsis size={21} strokeWidth={1.8} aria-hidden="true" />
+                <Ellipsis size={20} strokeWidth={1.75} aria-hidden="true" />
               </motion.span>
               <span className="relative z-10">More</span>
             </Link>

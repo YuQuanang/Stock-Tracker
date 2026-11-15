@@ -29,10 +29,15 @@ import {
 } from "@/lib/market-data/hours";
 import {
   globalProviderChain,
-  type ProviderChain,
+  ProviderChain,
   type ProviderStep,
 } from "@/lib/market-data/provider-chain";
 import { toStooqSymbol } from "@/lib/market-data/quotes";
+import {
+  formatTransitionReason,
+  getSgxTickerTransition,
+} from "@/lib/market-data/sgx-transitions";
+import { fetchDailyBarsViaTradingView } from "@/lib/market-data/tradingview";
 import { inferInstrumentMetadata } from "@/lib/symbols";
 
 export type ChartRange =
@@ -42,6 +47,7 @@ export type ChartRange =
   | "6M"
   | "YTD"
   | "1Y"
+  | "3Y"
   | "5Y"
   | "MAX";
 
@@ -182,6 +188,8 @@ export function resolveStartDateForRange(
       return `${todayIso.slice(0, 4)}-01-01`;
     case "1Y":
       return addCalendarDays(todayIso, -366);
+    case "3Y":
+      return addCalendarDays(todayIso, -365 * 3 - 1);
     case "5Y":
       return addCalendarDays(todayIso, -365 * 5 - 2);
     case "MAX":
@@ -201,16 +209,43 @@ async function fetchYahooDailyBars(params: {
   const period2 =
     Math.floor(Date.UTC(ey, em - 1, ed, 23, 59, 59) / 1000) + 86400;
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    params.symbol,
-  )}?interval=1d&period1=${period1}&period2=${period2}`;
+  const hosts = params.fetchImpl
+    ? ["query1.finance.yahoo.com"]
+    : ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 
-  const payload = await fetchProviderJson<YahooHistoryChartResponse>({
-    provider: "Yahoo Finance",
-    url,
-    timeoutMs: 10_000,
-    fetchImpl: params.fetchImpl,
-  });
+  let payload: YahooHistoryChartResponse | null = null;
+  let lastError: unknown = null;
+
+  for (const host of hosts) {
+    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(
+      params.symbol,
+    )}?interval=1d&period1=${period1}&period2=${period2}`;
+
+    try {
+      payload = await fetchProviderJson<YahooHistoryChartResponse>({
+        provider: "Yahoo Finance",
+        url,
+        timeoutMs: 10_000,
+        fetchImpl: params.fetchImpl,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof MarketDataError && error.kind === "not_found") {
+        throw error;
+      }
+    }
+  }
+
+  if (!payload) {
+    throw lastError instanceof Error
+      ? lastError
+      : new MarketDataError(
+          "network",
+          "Yahoo Finance",
+          `Could not fetch daily history for "${params.symbol}".`,
+        );
+  }
 
   const result = payload.chart?.result?.[0];
   const meta = result?.meta;
@@ -643,14 +678,17 @@ export async function ensureInstrumentDailyBars(
     targetInstrument.priceNotFoundAt !== null &&
     targetInstrument.priceNotFoundAt !== undefined
   ) {
+    const transition = getSgxTickerTransition(cleanSymbol);
+    const persistedReason = transition
+      ? formatTransitionReason(transition)
+      : targetInstrument.priceNotFoundReason;
     if (cachedRows.length > 0) {
       return {
         instrumentId: targetInstrument.id,
         currency: targetInstrument.currency,
         status: "stale_cache",
         unavailableReason:
-          targetInstrument.priceNotFoundReason ??
-          `Market prices unavailable for ${cleanSymbol}.`,
+          persistedReason ?? `Market prices unavailable for ${cleanSymbol}.`,
         source: cachedRows[cachedRows.length - 1]?.source ?? "cache",
         bars: cachedRows.map(mapDbPriceBarToPoint),
       };
@@ -660,7 +698,7 @@ export async function ensureInstrumentDailyBars(
       currency: targetInstrument.currency,
       status: "unavailable",
       unavailableReason:
-        targetInstrument.priceNotFoundReason ??
+        persistedReason ??
         `Historical price data is not available for ${cleanSymbol}.`,
       source: null,
       bars: [],
@@ -711,7 +749,9 @@ export async function ensureInstrumentDailyBars(
       ? addCalendarDays(latestCached, -5)
       : options.startDate;
 
-  const activeChain = options.chain ?? globalProviderChain;
+  const activeChain =
+    options.chain ??
+    (options.fetchImpl ? new ProviderChain() : globalProviderChain);
   const steps: ProviderStep<{ currency: string; bars: DailyBarRecord[] }>[] = [
     {
       provider: "yahoo",
@@ -723,17 +763,30 @@ export async function ensureInstrumentDailyBars(
           fetchImpl: options.fetchImpl,
         }),
     },
-    {
-      provider: "stooq",
+  ];
+
+  if (!options.fetchImpl) {
+    steps.push({
+      provider: "tradingview",
       execute: () =>
-        fetchStooqDailyBars({
+        fetchDailyBarsViaTradingView({
           symbol: cleanSymbol,
           startDate: fetchStart,
           endDate,
-          fetchImpl: options.fetchImpl,
         }),
-    },
-  ];
+    });
+  }
+
+  steps.push({
+    provider: "stooq",
+    execute: () =>
+      fetchStooqDailyBars({
+        symbol: cleanSymbol,
+        startDate: fetchStart,
+        endDate,
+        fetchImpl: options.fetchImpl,
+      }),
+  });
 
   try {
     const resolved = await activeChain.execute(steps, now.getTime());
@@ -820,11 +873,14 @@ export async function ensureInstrumentDailyBars(
         .catch(() => undefined);
     }
 
+    const transition = getSgxTickerTransition(cleanSymbol);
     return {
       instrumentId: targetInstrument.id,
       currency: targetInstrument.currency,
       status: "unavailable",
-      unavailableReason: `Historical price data is currently unavailable for ${cleanSymbol}.`,
+      unavailableReason: transition
+        ? formatTransitionReason(transition)
+        : `Historical price data is currently unavailable for ${cleanSymbol}.`,
       source: null,
       bars: [],
     };
@@ -884,15 +940,17 @@ export async function fetchPriceHistoryForRange(params: {
 
   if (params.range === "1D" || params.range === "5D") {
     if (existingInstr?.priceNotFoundAt && !params.forceRefresh) {
+      const transition = getSgxTickerTransition(symbol);
       return {
         symbol,
         currency: existingInstr.currency,
         range: params.range,
         interval: "1d",
         status: "unavailable",
-        unavailableReason:
-          existingInstr.priceNotFoundReason ??
-          `Market history is unavailable for ${symbol}.`,
+        unavailableReason: transition
+          ? formatTransitionReason(transition)
+          : (existingInstr.priceNotFoundReason ??
+              `Market history is unavailable for ${symbol}.`),
         source: null,
         bars: [],
       };
@@ -959,6 +1017,20 @@ export async function fetchPriceHistoryForRange(params: {
     source: daily.source,
     bars: daily.bars,
   };
+}
+
+export function clearHistoryCacheForInstrument(
+  instrumentId: string,
+  symbol?: string,
+): void {
+  dailySyncFreshness.delete(instrumentId);
+  dailySyncNotFoundCache.delete(instrumentId);
+  if (symbol) {
+    const clean = symbol.trim().toUpperCase();
+    if (clean) {
+      intradayCache.deleteByPrefix(`${clean}|`);
+    }
+  }
 }
 
 export function clearHistoryCaches(): void {

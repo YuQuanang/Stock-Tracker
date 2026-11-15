@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 export interface ChartThemePalette {
+  bg: string;
   ink: string;
   ink2: string;
   ink3: string;
   line: string;
+  grid: string;
   accent: string;
   gain: string;
   loss: string;
@@ -14,55 +16,59 @@ export interface ChartThemePalette {
   surface2: string;
 }
 
-const LIGHT_FALLBACK_PALETTE: ChartThemePalette = {
-  ink: "#1d1d1f",
-  ink2: "#55555b",
-  ink3: "#6e6e75",
-  line: "rgba(60, 60, 67, 0.14)",
-  accent: "#0071e3",
-  gain: "#1a7f37",
-  loss: "#c4281c",
-  surface: "#ffffff",
-  surface2: "#f5f5f7",
+const DARK_FALLBACK_PALETTE: ChartThemePalette = {
+  bg: "#0E1117",
+  ink: "#E8ECF1",
+  ink2: "#9AA4B2",
+  ink3: "#6B7686",
+  line: "#262D38",
+  grid: "#1F2630",
+  accent: "#5B8DEF",
+  gain: "#22C55E",
+  loss: "#EF4444",
+  surface: "#161B22",
+  surface2: "#1C222B",
 };
 
 /**
- * Distinct Apple-curated palette for categorical donut slices and benchmark
- * overlay lines (`0071e3` accent reserved for Portfolio when possible).
+ * Distinct high-contrast palette for multi-slice allocation donuts and multi-line
+ * benchmark overlays (`#5B8DEF` accent reserved for Portfolio / primary line).
  */
 export const SERIES_PALETTE = [
-  "#0071e3", // Apple blue
-  "#af52de", // System purple
-  "#ff9500", // System orange
-  "#30b0c7", // System teal
-  "#5856d6", // System indigo
-  "#ff375f", // System pink
-  "#34c759", // System green
-  "#a2845e", // System brown
-  "#8e8e93", // Neutral gray ("Other")
+  "#5B8DEF", // Primary accent blue (Portfolio)
+  "#A78BFA", // Violet
+  "#F59E0B", // Amber
+  "#38BDF8", // Sky cyan
+  "#2DD4BF", // Teal
+  "#FB7185", // Coral rose
+  "#818CF8", // Indigo
+  "#94A3B8", // Cool slate
+  "#6B7686", // Muted steel ("Other")
 ] as const;
 
 export function readChartThemePalette(): ChartThemePalette {
   if (typeof window === "undefined") {
-    return LIGHT_FALLBACK_PALETTE;
+    return DARK_FALLBACK_PALETTE;
   }
   const styles = window.getComputedStyle(document.documentElement);
   return {
-    ink: styles.getPropertyValue("--ink").trim() || LIGHT_FALLBACK_PALETTE.ink,
-    ink2: styles.getPropertyValue("--ink-2").trim() || LIGHT_FALLBACK_PALETTE.ink2,
-    ink3: styles.getPropertyValue("--ink-3").trim() || LIGHT_FALLBACK_PALETTE.ink3,
-    line: styles.getPropertyValue("--line").trim() || LIGHT_FALLBACK_PALETTE.line,
+    bg: styles.getPropertyValue("--bg").trim() || DARK_FALLBACK_PALETTE.bg,
+    ink: styles.getPropertyValue("--ink").trim() || DARK_FALLBACK_PALETTE.ink,
+    ink2: styles.getPropertyValue("--ink-2").trim() || DARK_FALLBACK_PALETTE.ink2,
+    ink3: styles.getPropertyValue("--ink-3").trim() || DARK_FALLBACK_PALETTE.ink3,
+    line: styles.getPropertyValue("--line").trim() || DARK_FALLBACK_PALETTE.line,
+    grid: styles.getPropertyValue("--grid").trim() || DARK_FALLBACK_PALETTE.grid,
     accent:
       styles.getPropertyValue("--accent").trim() ||
-      LIGHT_FALLBACK_PALETTE.accent,
-    gain: styles.getPropertyValue("--gain").trim() || LIGHT_FALLBACK_PALETTE.gain,
-    loss: styles.getPropertyValue("--loss").trim() || LIGHT_FALLBACK_PALETTE.loss,
+      DARK_FALLBACK_PALETTE.accent,
+    gain: styles.getPropertyValue("--gain").trim() || DARK_FALLBACK_PALETTE.gain,
+    loss: styles.getPropertyValue("--loss").trim() || DARK_FALLBACK_PALETTE.loss,
     surface:
       styles.getPropertyValue("--surface").trim() ||
-      LIGHT_FALLBACK_PALETTE.surface,
+      DARK_FALLBACK_PALETTE.surface,
     surface2:
       styles.getPropertyValue("--surface-2").trim() ||
-      LIGHT_FALLBACK_PALETTE.surface2,
+      DARK_FALLBACK_PALETTE.surface2,
   };
 }
 
@@ -103,7 +109,7 @@ export function useChartThemePalette(): {
     void themeTick;
     return typeof window !== "undefined"
       ? readChartThemePalette()
-      : LIGHT_FALLBACK_PALETTE;
+      : DARK_FALLBACK_PALETTE;
   }, [themeTick]);
   return { palette, themeTick };
 }
@@ -121,7 +127,7 @@ export function colorWithAlpha(cssColor: string, alpha: number): string {
   if (rgbMatch) {
     return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`;
   }
-  return `rgba(0, 113, 227, ${alpha})`;
+  return `rgba(91, 141, 239, ${alpha})`;
 }
 
 /** Filters daily `{ date, ... }` arrays by standard chart horizon windows. */
@@ -131,6 +137,7 @@ export type AnalyticsChartRange =
   | "6M"
   | "YTD"
   | "1Y"
+  | "3Y"
   | "5Y"
   | "MAX";
 
@@ -140,6 +147,7 @@ export const ANALYTICS_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
   "6M",
   "YTD",
   "1Y",
+  "3Y",
   "5Y",
   "MAX",
 ];
@@ -170,6 +178,9 @@ export function filterPointsByAnalyticsRange<T extends { date: string }>(
       break;
     case "1Y":
       cutoff = new Date(Date.UTC(y - 1, m - 1, d)).toISOString().slice(0, 10);
+      break;
+    case "3Y":
+      cutoff = new Date(Date.UTC(y - 3, m - 1, d)).toISOString().slice(0, 10);
       break;
     case "5Y":
       cutoff = new Date(Date.UTC(y - 5, m - 1, d)).toISOString().slice(0, 10);

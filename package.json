@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local db/migrate.ts",
+    "db:copy-to-postgres": "tsx --env-file-if-exists=.env.local scripts/migrate-local-to-postgres.ts",
     "hash-password": "tsx scripts/hash-password.ts"
   },
   "dependencies": {

@@ -5,21 +5,20 @@
  *
  * Built on TradingView Lightweight Charts v5 (Apache-2.0):
  *  - Range selector: `1D`, `5D`, `1M`, `6M`, `YTD`, `1Y`, `5Y`, `MAX`
- *  - Smooth gradient area series coloured by range performance (`--gain` / `--loss`)
+ *  - Single `#5B8DEF` accent `LineSeries`, thin `#1F2630` gridlines, NO gradient fill
  *  - Optional dashed Average Cost horizontal price line (`averageCostPerShare`)
- *  - Optional Buy / Sell / Dividend markers (`createSeriesMarkers`)
+ *  - Optional Buy / Sell / Dividend markers (`TradeMarkersPrimitive`)
  *  - Crosshair scrubbing readout with instant snap-back
- *  - Screen-reader summary of period high, low, start, and end
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AreaSeries,
   ColorType,
   createChart,
   CrosshairMode,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  LineSeries,
   LineStyle,
   type Time,
   type UTCTimestamp,
@@ -34,6 +33,7 @@ import { Card } from "@/components/ui/card";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
+import { readChartThemePalette, type ChartThemePalette } from "@/lib/charts/theme";
 import { formatMoney, formatQuantity } from "@/lib/format";
 import type {
   ChartRange,
@@ -49,6 +49,7 @@ const RANGE_OPTIONS: ChartRange[] = [
   "6M",
   "YTD",
   "1Y",
+  "3Y",
   "5Y",
   "MAX",
 ];
@@ -61,49 +62,14 @@ interface InteractivePriceChartProps {
   transactions: readonly EnrichedTransactionRow[];
 }
 
-interface ScannedThemeColors {
-  ink2: string;
-  ink3: string;
-  line: string;
-  accent: string;
-  gain: string;
-  loss: string;
-  surface: string;
-}
-
-function readThemePalette(): ScannedThemeColors {
-  if (typeof window === "undefined") {
-    return {
-      ink2: "#55555b",
-      ink3: "#6e6e75",
-      line: "rgba(60, 60, 67, 0.14)",
-      accent: "#0071e3",
-      gain: "#1a7f37",
-      loss: "#c4281c",
-      surface: "#ffffff",
-    };
-  }
-  const styles = window.getComputedStyle(document.documentElement);
+function buildMarkerPalette(theme: ChartThemePalette): TradeMarkerPalette {
   return {
-    ink2: styles.getPropertyValue("--ink-2").trim() || "#55555b",
-    ink3: styles.getPropertyValue("--ink-3").trim() || "#6e6e75",
-    line: styles.getPropertyValue("--line").trim() || "rgba(60, 60, 67, 0.14)",
-    accent: styles.getPropertyValue("--accent").trim() || "#0071e3",
-    gain: styles.getPropertyValue("--gain").trim() || "#1a7f37",
-    loss: styles.getPropertyValue("--loss").trim() || "#c4281c",
-    surface: styles.getPropertyValue("--surface").trim() || "#ffffff",
-  };
-}
-
-/** Apple system colours for trade badges (same hues in light and dark mode). */
-function buildMarkerPalette(theme: ScannedThemeColors): TradeMarkerPalette {
-  return {
-    buy: "#0a84ff",
-    sell: "#ff9f0a",
-    dividend: "#bf5af2",
+    buy: theme.accent, // Single accent #5B8DEF
+    sell: theme.ink2, // Neutral slate #9AA4B2 (never non-gain red)
+    dividend: theme.ink3, // Muted #6B7686
     mixed: theme.ink2,
     ring: theme.surface,
-    glyph: "#ffffff",
+    glyph: theme.bg,
   };
 }
 
@@ -112,26 +78,6 @@ interface TradeEvent {
   barDate: string;
   kind: TradeMarkerKind;
   description: string;
-}
-
-function withAlpha(hexOrRgb: string, alpha: number): string {
-  const trimmed = hexOrRgb.trim();
-  if (trimmed.startsWith("#") && (trimmed.length === 7 || trimmed.length === 4)) {
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    if (trimmed.length === 7) {
-      r = Number.parseInt(trimmed.slice(1, 3), 16);
-      g = Number.parseInt(trimmed.slice(3, 5), 16);
-      b = Number.parseInt(trimmed.slice(5, 7), 16);
-    } else {
-      r = Number.parseInt(trimmed[1] + trimmed[1], 16);
-      g = Number.parseInt(trimmed[2] + trimmed[2], 16);
-      b = Number.parseInt(trimmed[3] + trimmed[3], 16);
-    }
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  return trimmed;
 }
 
 function formatPointTimeForHeader(point: HistoricalPricePoint): string {
@@ -169,14 +115,13 @@ export function InteractivePriceChart({
   const [scrubPoint, setScrubPoint] = useState<{
     price: number;
     label: string;
-    /** Trade descriptions on this bar (e.g. `Buy 3 sh @ US$14.50`). */
     trades: string[];
   } | null>(null);
   const [themeTick, setThemeTick] = useState(0);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Area", Time> | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
   const tradeMarkersRef = useRef<TradeMarkersPrimitive | null>(null);
   const avgCostLineRef = useRef<IPriceLine | null>(null);
 
@@ -294,10 +239,6 @@ export function InteractivePriceChart({
     };
   }, [normalizedSeriesData]);
 
-  /**
-   * Trades snapped to the nearest bar at or before the trade date. Only daily
-   * ranges get markers (intraday bars cannot place a daily trade honestly).
-   */
   const tradeEvents = useMemo<TradeEvent[]>(() => {
     if (activeHistory?.interval !== "1d" || normalizedSeriesData.length === 0) {
       return [];
@@ -369,23 +310,20 @@ export function InteractivePriceChart({
       return;
     }
 
-    const palette = readThemePalette();
+    const palette = readChartThemePalette();
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 310,
+      height: 320,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: palette.ink3,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif',
-        fontSize: 11.5,
-        // Attribution is shown as a text link under the chart instead of the
-        // logo, which would otherwise sit on top of the price line.
+        textColor: palette.ink2,
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontSize: 11,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { visible: false },
-        horzLines: { color: palette.line, style: LineStyle.Solid },
+        vertLines: { color: palette.grid, style: LineStyle.Solid },
+        horzLines: { color: palette.grid, style: LineStyle.Solid },
       },
       rightPriceScale: {
         borderVisible: false,
@@ -409,6 +347,7 @@ export function InteractivePriceChart({
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
+          labelBackgroundColor: palette.surface2,
         },
       },
       handleScroll: {
@@ -424,13 +363,14 @@ export function InteractivePriceChart({
       },
     });
 
-    const series = chart.addSeries(AreaSeries, {
+    const series = chart.addSeries(LineSeries, {
+      color: palette.accent,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
     });
     const tradeMarkers = new TradeMarkersPrimitive(
-      buildMarkerPalette(readThemePalette()),
+      buildMarkerPalette(palette),
     );
     series.attachPrimitive(tradeMarkers);
 
@@ -459,7 +399,7 @@ export function InteractivePriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Synchronize data, colours, markers, crosshair listener, and Avg Cost line
+  // Synchronize data, single accent line, markers, crosshair listener, and Avg Cost line
   useEffect(() => {
     const chart = chartRef.current;
     const series = seriesRef.current;
@@ -468,22 +408,21 @@ export function InteractivePriceChart({
       return;
     }
 
-    const palette = readThemePalette();
-    const isUp = (periodStats?.change ?? 0) >= 0;
-    const lineColor = isUp ? palette.gain : palette.loss;
+    const palette = readChartThemePalette();
 
     chart.applyOptions({
-      layout: { textColor: palette.ink3 },
-      grid: { horzLines: { color: palette.line } },
+      layout: { textColor: palette.ink2 },
+      grid: {
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
+      },
       timeScale: {
         timeVisible: selectedRange === "1D" || selectedRange === "5D",
       },
     });
 
     series.applyOptions({
-      lineColor,
-      topColor: withAlpha(lineColor, 0.24),
-      bottomColor: withAlpha(lineColor, 0.0),
+      color: palette.accent,
     });
 
     series.setData(
@@ -491,7 +430,6 @@ export function InteractivePriceChart({
     );
     chart.timeScale().fitContent();
 
-    // Remove previous average-cost price line before re-creating
     if (avgCostLineRef.current) {
       series.removePriceLine(avgCostLineRef.current);
       avgCostLineRef.current = null;
@@ -501,7 +439,7 @@ export function InteractivePriceChart({
     if (showAvgCostLine && Number.isFinite(avgCostNum) && avgCostNum > 0) {
       avgCostLineRef.current = series.createPriceLine({
         price: avgCostNum,
-        color: palette.accent,
+        color: palette.ink2,
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -571,7 +509,6 @@ export function InteractivePriceChart({
     };
   }, [
     normalizedSeriesData,
-    periodStats,
     selectedRange,
     averageCostPerShare,
     showAvgCostLine,
@@ -583,11 +520,9 @@ export function InteractivePriceChart({
   const hasBars = normalizedSeriesData.length > 0;
 
   return (
-    <Card className="p-4 sm:p-6">
-      {/* Header row: Range change readout + Range selector pills */}
+    <Card className="p-4 sm:p-5">
+      {/* Header row: Range change readout + Range selector controls */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Fixed 44px height (`h-11` = 24px top row + 20px bottom row) so
-            scrubbing never shifts the chart or cards below by even 1px. */}
         <div className="flex h-11 min-w-0 flex-1 flex-col justify-between overflow-hidden">
           {scrubPoint ? (
             <>
@@ -598,20 +533,20 @@ export function InteractivePriceChart({
                   })}
                 </span>
                 {scrubPoint.trades.length > 0 && (
-                  <span className="truncate rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] leading-4 font-medium text-ink">
+                  <span className="truncate rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] leading-4 font-medium text-ink">
                     {scrubPoint.trades.join(" · ")}
                   </span>
                 )}
               </div>
-              <p className="num h-5 truncate text-[12px] leading-5 text-ink-3">
+              <p className="font-mono h-5 truncate text-[12px] leading-5 text-ink-2">
                 {scrubPoint.label}
               </p>
             </>
           ) : periodStats ? (
             <>
               <div className="flex h-6 items-center gap-2">
-                <span className="whitespace-nowrap text-[12.5px] leading-6 font-medium text-ink-3">
-                  {selectedRange} range change
+                <span className="whitespace-nowrap text-[12px] leading-6 font-medium text-ink-2">
+                  {selectedRange} change
                 </span>
                 <GainBadge
                   amount={periodStats.change}
@@ -621,7 +556,7 @@ export function InteractivePriceChart({
                   pill
                 />
               </div>
-              <p className="num h-5 truncate text-[12px] leading-5 text-ink-3">
+              <p className="num h-5 truncate text-[12px] leading-5 text-ink-2">
                 Low {formatMoney(periodStats.low, currency)} · High{" "}
                 {formatMoney(periodStats.high, currency)}
                 {activeHistory?.status === "stale_cache"
@@ -631,7 +566,7 @@ export function InteractivePriceChart({
             </>
           ) : (
             <div className="flex h-11 items-center">
-              <p className="truncate text-[13px] text-ink-3">
+              <p className="truncate text-[13px] text-ink-2">
                 {isLoadingRange
                   ? `Loading ${selectedRange} chart…`
                   : (activeHistory?.unavailableReason ??
@@ -641,7 +576,6 @@ export function InteractivePriceChart({
           )}
         </div>
 
-        {/* Apple-style compact animated range bar */}
         <SegmentedControl
           ariaLabel="Chart time range"
           size="sm"
@@ -659,13 +593,13 @@ export function InteractivePriceChart({
       </div>
 
       {/* Chart Canvas Area */}
-      <div className="relative mt-3 min-h-[310px] w-full">
+      <div className="relative mt-3 min-h-[320px] w-full">
         {isLoadingRange && !hasBars && (
-          <Skeleton className="absolute inset-0 h-[310px] w-full rounded-[14px]" />
+          <Skeleton className="absolute inset-0 h-[320px] w-full rounded-[12px]" />
         )}
 
         {!isLoadingRange && !hasBars && (
-          <div className="flex h-[310px] items-center justify-center rounded-[14px] border border-dashed border-line px-4 text-center text-[13.5px] text-ink-3">
+          <div className="flex h-[320px] items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
             {activeHistory?.unavailableReason ??
               `No historical chart bars available for ${symbol}.`}
           </div>
@@ -674,11 +608,12 @@ export function InteractivePriceChart({
         <div
           ref={containerRef}
           aria-label={`${symbol} ${selectedRange} price chart`}
-          className={hasBars ? "w-full" : "pointer-events-none h-0 overflow-hidden opacity-0"}
+          className={`transition-opacity duration-200 ${
+            hasBars ? "w-full opacity-100" : "pointer-events-none h-0 overflow-hidden opacity-0"
+          }`}
         />
       </div>
 
-      {/* Accessible screen-reader summary of chart series */}
       {periodStats && (
         <p className="sr-only">
           {symbol} {selectedRange} price series from{" "}
@@ -691,7 +626,7 @@ export function InteractivePriceChart({
         </p>
       )}
 
-      {/* Chart overlay toggles + Apple badge legend + TradingView attribution */}
+      {/* Chart overlay toggles + TradingView attribution */}
       {hasBars && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-line pt-3 text-[12px]">
           <div className="flex flex-wrap items-center gap-2">
@@ -700,10 +635,10 @@ export function InteractivePriceChart({
                 type="button"
                 onClick={() => setShowTradeMarkers((v) => !v)}
                 aria-pressed={showTradeMarkers}
-                className={`rounded-full border px-3 py-1 font-medium transition-colors ${
+                className={`rounded-[10px] border px-3 py-1 font-medium transition-colors ${
                   showTradeMarkers
-                    ? "border-accent/40 bg-accent/10 text-accent"
-                    : "border-line bg-surface-2 text-ink-3 hover:text-ink"
+                    ? "border-accent/40 bg-accent/12 text-accent"
+                    : "border-line bg-surface-2 text-ink-2 hover:text-ink"
                 }`}
               >
                 Trade markers ({tradeEvents.length})
@@ -715,10 +650,10 @@ export function InteractivePriceChart({
                 type="button"
                 onClick={() => setShowAvgCostLine((v) => !v)}
                 aria-pressed={showAvgCostLine}
-                className={`num rounded-full border px-3 py-1 font-medium transition-colors ${
+                className={`num rounded-[10px] border px-3 py-1 font-medium transition-colors ${
                   showAvgCostLine
-                    ? "border-accent/40 bg-accent/10 text-accent"
-                    : "border-line bg-surface-2 text-ink-3 hover:text-ink"
+                    ? "border-accent/40 bg-accent/12 text-accent"
+                    : "border-line bg-surface-2 text-ink-2 hover:text-ink"
                 }`}
               >
                 Avg cost ({formatMoney(averageCostPerShare, currency)})
@@ -728,12 +663,12 @@ export function InteractivePriceChart({
             {showTradeMarkers && tradeEvents.length > 0 && (
               <div
                 aria-label="Trade marker legend"
-                className="flex flex-wrap items-center gap-2.5 pl-1 text-[11.5px] text-ink-3"
+                className="flex flex-wrap items-center gap-3 pl-1 text-[12px] text-ink-2"
               >
                 <span className="inline-flex items-center gap-1">
                   <span
                     aria-hidden="true"
-                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#0a84ff] text-[9px] font-bold text-white"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-accent-ink"
                   >
                     ↑
                   </span>
@@ -742,7 +677,7 @@ export function InteractivePriceChart({
                 <span className="inline-flex items-center gap-1">
                   <span
                     aria-hidden="true"
-                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#ff9f0a] text-[9px] font-bold text-white"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-ink-2 text-[10px] font-bold text-bg"
                   >
                     ↓
                   </span>
@@ -751,7 +686,7 @@ export function InteractivePriceChart({
                 <span className="inline-flex items-center gap-1">
                   <span
                     aria-hidden="true"
-                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#bf5af2] text-[9px] font-bold text-white"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-ink-3 text-[10px] font-bold text-bg"
                   >
                     $
                   </span>
@@ -765,7 +700,7 @@ export function InteractivePriceChart({
             href="https://www.tradingview.com/lightweight-charts/"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[11px] text-ink-3 transition-colors hover:text-ink-2"
+            className="text-[12px] text-ink-3 transition-colors hover:text-ink-2"
           >
             Charts by TradingView
           </a>
@@ -774,4 +709,3 @@ export function InteractivePriceChart({
     </Card>
   );
 }
-

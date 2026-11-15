@@ -34,8 +34,8 @@ export function SegmentedControl<T extends string>({
   size = "md",
 }: SegmentedControlProps<T>) {
   const isSmall = size === "sm";
-  const trackRadius = isSmall ? "rounded-[9px] p-0.5" : "rounded-[10px] p-[3px]";
-  const thumbBorderRadius = isSmall ? 7 : 8;
+  const trackRadius = isSmall ? "rounded-[10px] p-0.5" : "rounded-[10px] p-[3px]";
+  const thumbBorderRadius = isSmall ? 8 : 8;
 
   return (
     <LayoutGroup id={layoutId}>
@@ -50,8 +50,8 @@ export function SegmentedControl<T extends string>({
         }}
         className={
           fullWidth
-            ? `grid w-full border border-line/40 ${trackRadius}`
-            : `no-scrollbar inline-flex max-w-full overflow-x-auto border border-line/40 ${trackRadius}`
+            ? `grid w-full border border-line ${trackRadius}`
+            : `no-scrollbar inline-flex max-w-full overflow-x-auto border border-line ${trackRadius}`
         }
       >
         {options.map((option) => {

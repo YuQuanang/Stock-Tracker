@@ -45,6 +45,8 @@ export const BROWSER_USER_AGENT =
 export async function fetchProviderJson<T>(params: {
   provider: string;
   url: string;
+  method?: "GET" | "POST";
+  body?: string;
   headers?: Record<string, string>;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -59,10 +61,12 @@ export async function fetchProviderJson<T>(params: {
   let response: Response;
   try {
     response = await fetchFn(params.url, {
+      method: params.method ?? "GET",
       headers: {
         "User-Agent": BROWSER_USER_AGENT,
         ...params.headers,
       },
+      body: params.body,
       signal: controller.signal,
       cache: "no-store",
     });

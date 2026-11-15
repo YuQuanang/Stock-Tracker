@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowLeftRight,
   ChevronDown,
@@ -15,6 +15,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { Portfolio } from "@/db/schema";
+import { PortfolioManageSheet } from "@/components/portfolios/portfolio-manage-sheet";
 import { CorporateActionsSheet } from "@/components/transactions/corporate-actions-sheet";
 import { TransactionSheet } from "@/components/transactions/transaction-sheet";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,6 @@ import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { Sheet } from "@/components/ui/sheet";
 import { formatMoney, formatQuantity } from "@/lib/format";
 import type {
   EnrichedCorporateAction,
@@ -76,11 +76,6 @@ export function TransactionsView({
   const [isPortfolioSheetOpen, setIsPortfolioSheetOpen] = useState(false);
   const [isSplitsSheetOpen, setIsSplitsSheetOpen] = useState(false);
 
-  const [newPortfolioName, setNewPortfolioName] = useState("");
-  const [newPortfolioCurrency, setNewPortfolioCurrency] = useState<
-    "USD" | "SGD"
-  >("USD");
-  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isRecalculatingSgd, setIsRecalculatingSgd] = useState(false);
   const [recalcSgdMessage, setRecalcSgdMessage] = useState<string | null>(null);
@@ -126,35 +121,6 @@ export function TransactionsView({
   const closedCount = filteredPositions.filter(
     (pos) => Number(pos.sharesHeld) === 0 && pos.closedTradeCount > 0,
   ).length;
-
-  async function handleCreatePortfolio(
-    event: FormEvent<HTMLFormElement>,
-  ): Promise<void> {
-    event.preventDefault();
-    setPortfolioError(null);
-
-    const response = await fetch("/api/portfolios", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: newPortfolioName.trim(),
-        type: "holdings",
-        defaultCurrency: newPortfolioCurrency,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setPortfolioError(body?.error ?? "Could not create portfolio.");
-      return;
-    }
-
-    setNewPortfolioName("");
-    setIsPortfolioSheetOpen(false);
-    router.refresh();
-  }
 
   async function handleDeleteTransaction(
     row: EnrichedTransactionRow,
@@ -232,7 +198,7 @@ export function TransactionsView({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Responsive Apple Toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
@@ -253,10 +219,10 @@ export function TransactionsView({
               ))}
             </select>
             <ChevronDown
-              size={15}
+              size={16}
               strokeWidth={2}
               aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-3"
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-2"
             />
           </div>
 
@@ -266,7 +232,9 @@ export function TransactionsView({
             className="h-10 px-3.5 text-[14px]"
           >
             <FolderPlus size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>New Portfolio</span>
+            <span>
+              {selectedPortfolioId !== "all" ? "Rename Portfolio" : "Portfolios"}
+            </span>
           </Button>
 
           <Button
@@ -283,28 +251,28 @@ export function TransactionsView({
           onClick={openNewTransaction}
           className="h-10 w-full px-4 text-[14px] sm:w-auto"
         >
-          <Plus size={17} strokeWidth={2.2} aria-hidden="true" />
+          <Plus size={16} strokeWidth={2} aria-hidden="true" />
           <span>New Transaction</span>
         </Button>
       </div>
 
       {/* Summary metrics strip when transactions exist */}
       {transactions.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Card className="p-4">
-            <p className="text-[12px] font-medium text-ink-3">Transactions</p>
+            <p className="text-[12px] font-medium text-ink-2">Transactions</p>
             <p className="num mt-1 text-[22px] font-semibold tracking-tight">
               {filteredTransactions.length}
             </p>
           </Card>
           <Card className="p-4">
-            <p className="text-[12px] font-medium text-ink-3">Open positions</p>
+            <p className="text-[12px] font-medium text-ink-2">Open positions</p>
             <p className="num mt-1 text-[22px] font-semibold tracking-tight">
               {openCount}
             </p>
           </Card>
           <Card className="p-4">
-            <p className="text-[12px] font-medium text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               Closed positions
             </p>
             <p className="num mt-1 text-[22px] font-semibold tracking-tight">
@@ -312,7 +280,7 @@ export function TransactionsView({
             </p>
           </Card>
           <Card className="p-4">
-            <p className="text-[12px] font-medium text-ink-3">Zero-cost buys</p>
+            <p className="text-[12px] font-medium text-ink-2">Zero-cost buys</p>
             <p className="num mt-1 text-[22px] font-semibold tracking-tight">
               {zeroCostBuys.length}
             </p>
@@ -434,8 +402,8 @@ export function TransactionsView({
 
             <div className="relative w-full sm:max-w-[260px]">
               <Search
-                size={15}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+                size={16}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-2"
                 aria-hidden="true"
               />
               <input
@@ -452,7 +420,7 @@ export function TransactionsView({
           {/* Mobile Apple Inset List (< 768px) */}
           <Card className="divide-y divide-line overflow-hidden md:hidden">
             {filteredTransactions.length === 0 ? (
-              <div className="px-4 py-10 text-center text-[14px] text-ink-3">
+              <div className="px-4 py-10 text-center text-[14px] text-ink-2">
                 No transactions match the current filters.
               </div>
             ) : (
@@ -475,7 +443,7 @@ export function TransactionsView({
                           <span className="font-mono text-[15px] font-semibold text-ink">
                             {row.symbol}
                           </span>
-                          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">
+                          <span className="rounded-[6px] bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">
                             {row.type}
                           </span>
                           {exchangeLabel && (
@@ -497,7 +465,7 @@ export function TransactionsView({
                             ? formatMoney(row.totalCostSgd, "SGD")
                             : "—"}
                         </p>
-                        <p className="num mt-0.5 text-[12px] text-ink-3">
+                        <p className="num mt-0.5 text-[12px] text-ink-2">
                           {qtyAndPriceText}
                           {row.currency === "USD" && row.fxRateToSgd
                             ? ` · @${row.fxRateToSgd}`
@@ -506,27 +474,29 @@ export function TransactionsView({
                       </div>
                     </div>
 
-                    <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-ink-3">
-                      <span className="num truncate">
-                        {row.portfolioName} · {row.localDate}{" "}
-                        {row.localTime.slice(0, 5)}
+                    <div className="mt-2 flex items-center justify-between gap-2 text-[12px] text-ink-2">
+                      <span className="truncate">
+                        {row.portfolioName} ·{" "}
+                        <span className="font-mono">
+                          {row.localDate} {row.localTime.slice(0, 5)}
+                        </span>
                       </span>
                       <div className="inline-flex shrink-0 items-center gap-1">
                         <button
                           type="button"
                           onClick={() => openEditTransaction(row)}
                           aria-label={`Edit ${row.symbol} transaction`}
-                          className="rounded-lg p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                          className="rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
                         >
-                          <Pencil size={14} aria-hidden="true" />
+                          <Pencil size={16} aria-hidden="true" />
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteTransaction(row)}
                           aria-label={`Delete ${row.symbol} transaction`}
-                          className="rounded-lg p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-loss"
+                          className="rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-loss"
                         >
-                          <Trash2 size={14} aria-hidden="true" />
+                          <Trash2 size={16} aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -541,7 +511,7 @@ export function TransactionsView({
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-[14px]">
                 <thead>
-                  <tr className="border-b border-line text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                  <tr className="border-b border-line text-[12px] font-medium text-ink-2">
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Portfolio</th>
                     <th className="px-4 py-3">Symbol</th>
@@ -558,7 +528,7 @@ export function TransactionsView({
                     <tr>
                       <td
                         colSpan={9}
-                        className="px-4 py-10 text-center text-ink-3"
+                        className="px-4 py-10 text-center text-ink-2"
                       >
                         No transactions match the current filters.
                       </td>
@@ -571,9 +541,9 @@ export function TransactionsView({
                       return (
                         <tr
                           key={row.id}
-                          className="transition-colors hover:bg-surface-2/50"
+                          className="transition-colors hover:bg-surface-2"
                         >
-                          <td className="num whitespace-nowrap px-4 py-3">
+                          <td className="font-mono whitespace-nowrap px-4 py-3 text-[13px]">
                             <div>{row.localDate}</div>
                             <div className="text-[12px] text-ink-3">
                               {row.localTime}
@@ -588,19 +558,19 @@ export function TransactionsView({
                                 {row.symbol}
                               </span>
                               {exchangeLabel && (
-                                <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
+                                <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-2">
                                   {exchangeLabel}
                                 </span>
                               )}
                             </div>
                             {row.instrumentName && (
-                              <div className="max-w-[200px] truncate text-[12px] text-ink-3">
+                              <div className="max-w-[200px] truncate text-[12px] text-ink-2">
                                 {row.instrumentName}
                               </div>
                             )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3">
-                            <span className="inline-flex rounded-full bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium">
+                            <span className="inline-flex rounded-[6px] bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium">
                               {row.type}
                             </span>
                           </td>
@@ -630,7 +600,7 @@ export function TransactionsView({
                                 : "—"}
                             </div>
                             {row.currency === "USD" && row.fxRateToSgd && (
-                              <div className="text-[11px] text-ink-3">
+                              <div className="text-[11px] text-ink-2">
                                 @{row.fxRateToSgd}
                                 {row.isManualFxRate ? " (manual)" : ""}
                               </div>
@@ -649,17 +619,17 @@ export function TransactionsView({
                                 type="button"
                                 onClick={() => openEditTransaction(row)}
                                 aria-label={`Edit ${row.symbol} transaction`}
-                                className="rounded-lg p-1.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                                className="rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
                               >
-                                <Pencil size={15} aria-hidden="true" />
+                                <Pencil size={16} aria-hidden="true" />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleDeleteTransaction(row)}
                                 aria-label={`Delete ${row.symbol} transaction`}
-                                className="rounded-lg p-1.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-loss"
+                                className="rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-loss"
                               >
-                                <Trash2 size={15} aria-hidden="true" />
+                                <Trash2 size={16} aria-hidden="true" />
                               </button>
                             </div>
                           </td>
@@ -688,87 +658,14 @@ export function TransactionsView({
         }
       />
 
-      {/* New Portfolio Sheet */}
-      <Sheet
+      <PortfolioManageSheet
         isOpen={isPortfolioSheetOpen}
+        portfolios={holdingsPortfolios}
+        initialSelectedPortfolioId={selectedPortfolioId}
         onClose={() => setIsPortfolioSheetOpen(false)}
-        maxWidthClass="sm:max-w-[440px]"
-        title="New Portfolio"
-        description="Each portfolio maintains its own independent FIFO ledger."
-      >
-        <form onSubmit={handleCreatePortfolio} className="space-y-4">
-          <div>
-            <label
-              htmlFor="new-portfolio-name"
-              className="mb-1.5 block h-5 text-[13px] font-medium leading-5 text-ink-2"
-            >
-              Portfolio name
-            </label>
-            <input
-              id="new-portfolio-name"
-              type="text"
-              required
-              placeholder="US Stocks, SG Stocks, or Current"
-              value={newPortfolioName}
-              onChange={(event) => setNewPortfolioName(event.target.value)}
-              className="field-input"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="new-portfolio-currency"
-              className="mb-1.5 block h-5 text-[13px] font-medium leading-5 text-ink-2"
-            >
-              Default currency
-            </label>
-            <div className="relative">
-              <select
-                id="new-portfolio-currency"
-                value={newPortfolioCurrency}
-                onChange={(event) =>
-                  setNewPortfolioCurrency(
-                    event.target.value === "SGD" ? "SGD" : "USD",
-                  )
-                }
-                className="field-input appearance-none pr-9"
-              >
-                <option value="USD">USD — US Dollar</option>
-                <option value="SGD">SGD — Singapore Dollar</option>
-              </select>
-              <ChevronDown
-                size={16}
-                strokeWidth={2}
-                aria-hidden="true"
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-3"
-              />
-            </div>
-          </div>
-
-          {portfolioError && (
-            <p role="alert" className="text-[13.5px] text-loss">
-              {portfolioError}
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 gap-2.5 pt-1 sm:flex sm:justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => setIsPortfolioSheetOpen(false)}
-              className="w-full sm:w-auto"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={!newPortfolioName.trim()}
-              className="w-full sm:w-auto"
-            >
-              Create Portfolio
-            </Button>
-          </div>
-        </form>
-      </Sheet>
+        onChanged={() => router.refresh()}
+        onCreated={(id) => setSelectedPortfolioId(id)}
+      />
 
       <CorporateActionsSheet
         isOpen={isSplitsSheetOpen}

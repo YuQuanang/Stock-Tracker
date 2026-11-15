@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import {
+  ArrowRightLeft,
   Briefcase,
   ChevronDown,
   ChevronRight,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -15,6 +17,11 @@ import {
 } from "lucide-react";
 import type { Portfolio } from "@/db/schema";
 import { Sparkline } from "@/components/charts/sparkline";
+import {
+  TickerMigrationSheet,
+  type TickerMigrationTarget,
+} from "@/components/holdings/ticker-migration-sheet";
+import { PortfolioManageSheet } from "@/components/portfolios/portfolio-manage-sheet";
 import { TransactionSheet } from "@/components/transactions/transaction-sheet";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button-link";
@@ -23,8 +30,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Sheet } from "@/components/ui/sheet";
+import { usePriceFlashRef } from "@/hooks/use-price-flash";
 import { useQuotesPoll } from "@/hooks/use-quotes-poll";
-import { formatMoney, formatPercent, formatQuantity } from "@/lib/format";
+import {
+  formatCompactFreshness,
+  formatMoney,
+  formatPercent,
+  formatQuantity,
+} from "@/lib/format";
 import {
   buildValuedHoldings,
   type SerializedFifoBucket,
@@ -32,6 +45,7 @@ import {
 import type { ResolvedInstrumentQuote } from "@/lib/market-data/batch-quotes";
 import type { ExchangeRateSnapshot } from "@/lib/market-data/fx";
 import type { CombinedMarketOverview } from "@/lib/market-data/hours";
+import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import type { LedgerPositionSummary } from "@/lib/services/ledger";
 import { formatExchangeCodeForDisplay } from "@/lib/transactions/form-logic";
 
@@ -55,6 +69,23 @@ interface OverrideTarget {
   isDelisted: boolean;
 }
 
+function FlashText({
+  value,
+  children,
+  className = "",
+}: {
+  value: number | null;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const ref = usePriceFlashRef<HTMLDivElement>(value);
+  return (
+    <div ref={ref} className={`rounded-[6px] ${className}`}>
+      {children}
+    </div>
+  );
+}
+
 export function HoldingsView({
   portfolios,
   buckets,
@@ -74,6 +105,7 @@ export function HoldingsView({
   const [sortField, setSortField] = useState<SortField>("value");
   const [searchQuery, setSearchQuery] = useState("");
   const [isTxSheetOpen, setIsTxSheetOpen] = useState(false);
+  const [isPortfolioSheetOpen, setIsPortfolioSheetOpen] = useState(false);
 
   const [retryingSymbol, setRetryingSymbol] = useState<string | null>(null);
   const [retryFeedback, setRetryFeedback] = useState<string | null>(null);
@@ -81,6 +113,8 @@ export function HoldingsView({
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(
     null,
   );
+  const [migrationTarget, setMigrationTarget] =
+    useState<TickerMigrationTarget | null>(null);
   const [manualPriceInput, setManualPriceInput] = useState("");
   const [isDelistedInput, setIsDelistedInput] = useState(false);
   const [isSavingOverride, setIsSavingOverride] = useState(false);
@@ -382,6 +416,15 @@ export function HoldingsView({
                   <span>New Transaction</span>
                 </Button>
               )}
+              {holdingsPortfolios.length > 0 && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsPortfolioSheetOpen(true)}
+                >
+                  <Pencil size={16} strokeWidth={1.9} aria-hidden="true" />
+                  <span>Portfolios</span>
+                </Button>
+              )}
               <ButtonLink
                 href="/import-export"
                 variant={holdingsPortfolios.length > 0 ? "secondary" : "primary"}
@@ -390,6 +433,14 @@ export function HoldingsView({
               </ButtonLink>
             </>
           }
+        />
+
+        <PortfolioManageSheet
+          isOpen={isPortfolioSheetOpen}
+          portfolios={holdingsPortfolios}
+          initialSelectedPortfolioId={selectedPortfolioId}
+          onClose={() => setIsPortfolioSheetOpen(false)}
+          onChanged={() => router.refresh()}
         />
 
         <TransactionSheet
@@ -405,8 +456,8 @@ export function HoldingsView({
   }
 
   return (
-    <div className="space-y-5">
-      {/* Apple Toolbar: Portfolio Picker + Refresh + New Transaction */}
+    <div className="space-y-6">
+      {/* Toolbar: Portfolio Picker + Refresh + New Transaction */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[195px] flex-1 sm:flex-none">
@@ -426,12 +477,22 @@ export function HoldingsView({
               ))}
             </select>
             <ChevronDown
-              size={15}
-              strokeWidth={2}
+              size={16}
+              strokeWidth={1.9}
               aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-3"
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-ink-2"
             />
           </div>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setIsPortfolioSheetOpen(true)}
+            aria-label="Manage or rename portfolios"
+          >
+            <Pencil size={15} strokeWidth={1.9} aria-hidden="true" />
+            <span>{selectedPortfolioId !== "all" ? "Rename" : "Portfolios"}</span>
+          </Button>
 
           <Button
             variant="secondary"
@@ -440,7 +501,7 @@ export function HoldingsView({
             disabled={isRefreshing}
           >
             <RefreshCw
-              size={15}
+              size={16}
               strokeWidth={1.9}
               aria-hidden="true"
               className={isRefreshing ? "animate-spin" : undefined}
@@ -454,80 +515,82 @@ export function HoldingsView({
           onClick={() => setIsTxSheetOpen(true)}
           className="w-full sm:w-auto"
         >
-          <Plus size={17} strokeWidth={2.2} aria-hidden="true" />
+          <Plus size={16} strokeWidth={2} aria-hidden="true" />
           <span>New Transaction</span>
         </Button>
       </div>
 
       {/* Base-Currency KPI Summary Strip */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-4">
-          <p className="text-[12px] font-medium text-ink-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="p-4 sm:p-5">
+          <p className="text-[12px] font-medium text-ink-2">
             Open Market Value ({summary.baseCurrency})
           </p>
-          <p className="num mt-1 text-[23px] font-semibold tracking-tight text-ink">
-            {formatMoney(summary.totalMarketValueInBase, summary.baseCurrency)}
-          </p>
-          <p className="num mt-1 text-[12px] text-ink-3">
+          <FlashText value={Number(summary.totalMarketValueInBase)}>
+            <p className="num mt-1.5 text-[24px] font-semibold tracking-tight text-ink">
+              {formatMoney(summary.totalMarketValueInBase, summary.baseCurrency)}
+            </p>
+          </FlashText>
+          <p className="num mt-1.5 text-[12px] text-ink-2">
             Cost basis{" "}
             {formatMoney(summary.totalCostBasisInBase, summary.baseCurrency)}
           </p>
         </Card>
 
-        <Card className="p-4">
-          <p className="text-[12px] font-medium text-ink-3">
+        <Card className="p-4 sm:p-5">
+          <p className="text-[12px] font-medium text-ink-2">
             Day Change ({summary.baseCurrency})
           </p>
-          <div className="mt-1.5">
+          <div className="mt-2">
             <GainBadge
               amount={summary.totalDayChangeInBase}
               currency={summary.baseCurrency}
               percent={summary.totalDayChangePercent}
             />
           </div>
-          <p className="num mt-1.5 text-[12px] text-ink-3">
+          <p className="num mt-2 text-[12px] text-ink-2">
             {fxUsdToSgd
               ? `1 USD = ${fxUsdToSgd.rate} SGD`
               : "USD/SGD rate unavailable"}
           </p>
         </Card>
 
-        <Card className="p-4">
-          <p className="text-[12px] font-medium text-ink-3">
+        <Card className="p-4 sm:p-5">
+          <p className="text-[12px] font-medium text-ink-2">
             Unrealized P&L ({summary.baseCurrency})
           </p>
-          <div className="mt-1.5">
+          <div className="mt-2">
             <GainBadge
               amount={summary.totalUnrealizedPnlInBase}
               currency={summary.baseCurrency}
               percent={summary.totalUnrealizedPnlPercent}
             />
           </div>
-          <p className="mt-1.5 text-[12px] text-ink-3">
+          <p className="mt-2 text-[12px] text-ink-2">
             Includes FX return vs purchase date
           </p>
         </Card>
 
-        <Card className="p-4">
-          <p className="text-[12px] font-medium text-ink-3">
+        <Card className="p-4 sm:p-5">
+          <p className="text-[12px] font-medium text-ink-2">
             Realized + Dividends ({summary.baseCurrency})
           </p>
-          <div className="mt-1.5">
+          <div className="mt-2">
             <GainBadge
               amount={realizedPlusDividendsBase}
               currency={summary.baseCurrency}
             />
           </div>
-          <p className="num mt-1.5 text-[12px] text-ink-3">
+          <p className="num mt-2 text-[12px] text-ink-2">
             Dividends{" "}
             {formatMoney(summary.totalDividendsInBase, summary.baseCurrency)}
           </p>
         </Card>
       </div>
 
-      {/* Compact Jump Pill for Unpriced Open Positions -> #not-found */}
+      {/* Compact Jump Banner for Unpriced Open Positions -> #not-found */}
       {summary.unpricedOpenSymbols.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-[14px] border border-line bg-surface px-4 py-2.5 text-[13px]">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-line bg-surface px-4 py-3 text-[13px]">
           <div className="flex min-w-0 items-center gap-2 text-ink-2">
             <TriangleAlert
               size={16}
@@ -556,10 +619,10 @@ export function HoldingsView({
                 });
               }
             }}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface-2 px-3 py-1 text-[12.5px] font-medium text-accent transition-colors hover:bg-surface-2/80"
+            className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-line bg-surface-2 px-3 py-1.5 text-[12.5px] font-medium text-accent transition-colors hover:border-line-strong hover:bg-surface-2/80"
           >
             <span>View not found</span>
-            <ChevronRight size={13} aria-hidden="true" />
+            <ChevronRight size={14} aria-hidden="true" />
           </a>
         </div>
       )}
@@ -593,17 +656,17 @@ export function HoldingsView({
               <option value="symbol">Sort: Symbol A–Z</option>
             </select>
             <ChevronDown
-              size={14}
-              strokeWidth={2}
+              size={16}
+              strokeWidth={1.9}
               aria-hidden="true"
-              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3"
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-2"
             />
           </div>
 
           <div className="relative w-full sm:w-[220px]">
             <Search
-              size={15}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-2"
               aria-hidden="true"
             />
             <input
@@ -618,11 +681,11 @@ export function HoldingsView({
         </div>
       </div>
 
-      {/* Mobile Apple Stocks-Style List (< 768px) */}
+      {/* Mobile Holdings List (< 768px) */}
       {!hideEmptyPricedLists && (
         <Card className="divide-y divide-line overflow-hidden md:hidden">
           {pricedVisibleRows.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[14px] text-ink-3">
+            <div className="px-4 py-10 text-center text-[14px] text-ink-2">
               No {activeTab} positions match the current filter.
             </div>
           ) : (
@@ -632,16 +695,16 @@ export function HoldingsView({
               <Link
                 key={row.key}
                 href={detailHref}
-                className="block px-4 py-3.5 transition-colors hover:bg-surface-2/60"
+                className="block px-4 py-3.5 transition-colors hover:bg-surface-2"
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[15.5px] font-semibold text-ink">
+                      <span className="font-mono text-[15px] font-semibold text-ink">
                         {row.symbol}
                       </span>
                       {row.weightPercent && activeTab === "open" && (
-                        <span className="num rounded-full bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
+                        <span className="num rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-2">
                           {formatPercent(row.weightPercent, {
                             fractionDigits: 1,
                           })}
@@ -660,15 +723,19 @@ export function HoldingsView({
                   />
 
                   <div className="shrink-0 text-right">
-                    <p className="num text-[15px] font-semibold text-ink">
-                      {activeTab === "open"
-                        ? row.marketValue
-                          ? formatMoney(row.marketValue, row.currency)
-                          : "Price unavailable"
-                        : formatMoney(row.realizedPnl, row.currency, {
-                            signed: true,
-                          })}
-                    </p>
+                    <FlashText
+                      value={row.marketValue ? Number(row.marketValue) : null}
+                    >
+                      <p className="num text-[15px] font-semibold text-ink">
+                        {activeTab === "open"
+                          ? row.marketValue
+                            ? formatMoney(row.marketValue, row.currency)
+                            : "Price unavailable"
+                          : formatMoney(row.realizedPnl, row.currency, {
+                              signed: true,
+                            })}
+                      </p>
+                    </FlashText>
                     <div className="mt-0.5 flex justify-end">
                       {activeTab === "open" ? (
                         <GainBadge
@@ -689,16 +756,31 @@ export function HoldingsView({
                   </div>
                 </div>
 
-                <div className="num mt-2 flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-ink-3">
+                <div className="num mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] text-ink-2">
                   <span>
                     {activeTab === "open"
                       ? `${formatQuantity(row.sharesHeld)} sh · Avg ${formatMoney(row.averageCostPerShare, row.currency)}`
                       : `${row.closedTradeCount} closed trade${row.closedTradeCount === 1 ? "" : "s"} · Div ${formatMoney(row.dividendsReceived, row.currency)}`}
                   </span>
                   <span>
-                    {row.unitPrice
-                      ? `${formatMoney(row.unitPrice, row.currency)} · ${row.freshnessLabel}`
-                      : row.freshnessLabel}
+                    {row.unitPrice ? (
+                      <>
+                        {formatMoney(row.unitPrice, row.currency)}{" "}
+                        <span
+                          title={row.freshnessLabel}
+                          className="font-mono text-[11.5px] text-ink-3"
+                        >
+                          · {formatCompactFreshness(row.freshnessLabel)}
+                        </span>
+                      </>
+                    ) : (
+                      <span
+                        title={row.freshnessLabel}
+                        className="text-ink-3"
+                      >
+                        {formatCompactFreshness(row.freshnessLabel)}
+                      </span>
+                    )}
                   </span>
                 </div>
               </Link>
@@ -712,27 +794,64 @@ export function HoldingsView({
       {!hideEmptyPricedLists && (
         <Card className="hidden overflow-hidden md:block">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-[13.5px]">
+            <table className="w-full border-collapse text-left text-[13px] xl:text-[13.5px]">
               <thead>
-                <tr className="border-b border-line text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
-                  <th className="px-4 py-3">Instrument</th>
-                  <th className="px-3 py-3">Trend</th>
-                  <th className="px-3 py-3 text-right">
-                    {activeTab === "open" ? "Shares / Avg Cost" : "Closed Trades"}
+                <tr className="border-b border-line text-[11.5px] font-medium leading-tight text-ink-2">
+                  <th className="py-2.5 pl-4 pr-2">Instrument</th>
+                  <th className="px-2 py-2.5">Trend</th>
+                  <th className="px-2 py-2.5 text-right">
+                    {activeTab === "open" ? (
+                      <>
+                        <span>Shares</span>
+                        <span className="block font-normal text-ink-3">
+                          Avg Cost
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Closed</span>
+                        <span className="block font-normal text-ink-3">
+                          Trades
+                        </span>
+                      </>
+                    )}
                   </th>
-                  <th className="px-3 py-3 text-right">Price</th>
-                  <th className="px-3 py-3 text-right">
-                    {activeTab === "open" ? "Market Value" : "Dividends"}
+                  <th className="px-2 py-2.5 text-right">Price</th>
+                  <th className="px-2 py-2.5 text-right">
+                    {activeTab === "open" ? (
+                      <>
+                        <span>Market</span>
+                        <span className="block">Value</span>
+                      </>
+                    ) : (
+                      "Dividends"
+                    )}
                   </th>
-                  <th className="px-3 py-3 text-right">Day Change</th>
-                  <th className="px-3 py-3 text-right">
-                    {activeTab === "open" ? "Unrealized P&L" : "Realized P&L"}
+                  <th className="px-2 py-2.5 text-right">
+                    <span>Day</span>
+                    <span className="block">Change</span>
                   </th>
-                  <th className="px-3 py-3 text-right">Total Return</th>
+                  <th className="px-2 py-2.5 text-right">
+                    {activeTab === "open" ? (
+                      <>
+                        <span>Unrealized</span>
+                        <span className="block">P&amp;L</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Realized</span>
+                        <span className="block">P&amp;L</span>
+                      </>
+                    )}
+                  </th>
+                  <th className="px-2 py-2.5 text-right">
+                    <span>Total</span>
+                    <span className="block">Return</span>
+                  </th>
                   {activeTab === "open" && (
-                    <th className="px-3 py-3 text-right">Weight</th>
+                    <th className="px-2 py-2.5 text-right">Weight</th>
                   )}
-                  <th className="w-8 px-2 py-3" aria-label="Open detail" />
+                  <th className="w-6 py-2.5 pl-1 pr-3" aria-label="Open detail" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -740,7 +859,7 @@ export function HoldingsView({
                   <tr>
                     <td
                       colSpan={activeTab === "open" ? 10 : 9}
-                      className="px-4 py-12 text-center text-ink-3"
+                      className="px-4 py-12 text-center text-ink-2"
                     >
                       No {activeTab} positions match the current filter.
                     </td>
@@ -756,24 +875,24 @@ export function HoldingsView({
                     <tr
                       key={row.key}
                       onClick={() => router.push(detailHref)}
-                      className="cursor-pointer transition-colors hover:bg-surface-2/55"
+                      className="cursor-pointer transition-colors hover:bg-surface-2"
                     >
-                      <td className="px-4 py-3.5">
+                      <td className="py-3 pl-4 pr-2">
                         <div className="flex items-center gap-1.5">
                           <Link
                             href={detailHref}
                             onClick={(e) => e.stopPropagation()}
-                            className="font-mono text-[14.5px] font-semibold text-ink hover:text-accent"
+                            className="font-mono text-[13.5px] font-semibold text-ink hover:text-accent"
                           >
                             <span>{row.symbol}</span>
                           </Link>
                           {exchangeLabel && (
-                            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
+                            <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
                               {exchangeLabel}
                             </span>
                           )}
                         </div>
-                        <div className="mt-0.5 max-w-[210px] truncate text-[12px] text-ink-3">
+                        <div className="mt-0.5 max-w-[140px] truncate text-[11.5px] text-ink-2 lg:max-w-[165px] xl:max-w-[195px]">
                           {row.name ?? "—"}
                           {selectedPortfolioId === "all" &&
                           row.portfolioNames.length > 0
@@ -782,21 +901,21 @@ export function HoldingsView({
                         </div>
                       </td>
 
-                      <td className="px-3 py-3.5">
+                      <td className="px-2 py-3">
                         <Sparkline
                           values={row.sparklineCloses}
-                          width={78}
-                          height={26}
+                          width={58}
+                          height={24}
                         />
                       </td>
 
-                      <td className="num whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="num whitespace-nowrap px-2 py-3 text-right">
                         {activeTab === "open" ? (
                           <>
                             <div className="font-medium text-ink">
                               {formatQuantity(row.sharesHeld)} sh
                             </div>
-                            <div className="text-[12px] text-ink-3">
+                            <div className="text-[11.5px] text-ink-2">
                               Avg{" "}
                               {formatMoney(
                                 row.averageCostPerShare,
@@ -811,33 +930,39 @@ export function HoldingsView({
                               {row.closedTradeCount} trade
                               {row.closedTradeCount === 1 ? "" : "s"}
                             </div>
-                            <div className="text-[12px] text-ink-3">
+                            <div className="text-[11.5px] text-ink-2">
                               Won {row.winningTradeCount}/{row.closedTradeCount}
                             </div>
                           </>
                         )}
                       </td>
 
-                      <td className="num whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="num whitespace-nowrap px-2 py-3 text-right">
                         {row.unitPrice ? (
-                          <>
+                          <FlashText value={Number(row.unitPrice)}>
                             <div className="font-medium text-ink">
                               {formatMoney(row.unitPrice, row.currency, {
                                 maximumFractionDigits: 4,
                               })}
                             </div>
-                            <div className="text-[11.5px] text-ink-3">
-                              {row.freshnessLabel}
+                            <div
+                              title={row.freshnessLabel}
+                              className="font-mono text-[11px] text-ink-3"
+                            >
+                              {formatCompactFreshness(row.freshnessLabel)}
                             </div>
-                          </>
+                          </FlashText>
                         ) : (
-                          <span className="inline-flex rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-3">
-                            Price unavailable
+                          <span
+                            title={row.freshnessLabel}
+                            className="inline-flex rounded-[6px] bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-2"
+                          >
+                            {formatCompactFreshness(row.freshnessLabel)}
                           </span>
                         )}
                       </td>
 
-                      <td className="num whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="num whitespace-nowrap px-2 py-3 text-right">
                         {activeTab === "open" ? (
                           row.marketValue ? (
                             <>
@@ -846,7 +971,7 @@ export function HoldingsView({
                               </div>
                               {row.currency !== baseCurrency &&
                                 row.marketValueInBase && (
-                                  <div className="text-[11.5px] text-ink-3">
+                                  <div className="text-[11.5px] text-ink-2">
                                     {formatMoney(
                                       row.marketValueInBase,
                                       baseCurrency,
@@ -864,7 +989,7 @@ export function HoldingsView({
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="whitespace-nowrap px-2 py-3 text-right">
                         <GainBadge
                           amount={
                             activeTab === "open"
@@ -874,10 +999,11 @@ export function HoldingsView({
                           currency={row.currency}
                           percent={row.dayChangePercent}
                           size="sm"
+                          layout="stacked"
                         />
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="whitespace-nowrap px-2 py-3 text-right">
                         {activeTab === "open" ? (
                           <div>
                             <GainBadge
@@ -885,10 +1011,14 @@ export function HoldingsView({
                               currency={row.currency}
                               percent={row.unrealizedPnlPercent}
                               size="sm"
+                              layout="stacked"
                             />
                             {row.currency !== baseCurrency &&
                               row.unrealizedPnlInBase && (
-                                <div className="num mt-0.5 text-[11.5px] text-ink-3">
+                                <div
+                                  title={`${baseCurrency} equivalent`}
+                                  className="num mt-0.5 text-[11px] leading-tight text-ink-2"
+                                >
                                   {formatMoney(
                                     row.unrealizedPnlInBase,
                                     baseCurrency,
@@ -903,10 +1033,14 @@ export function HoldingsView({
                               amount={row.realizedPnl}
                               currency={row.currency}
                               size="sm"
+                              layout="stacked"
                             />
                             {row.currency !== baseCurrency &&
                               row.realizedPnlInBase && (
-                                <div className="num mt-0.5 text-[11.5px] text-ink-3">
+                                <div
+                                  title={`${baseCurrency} equivalent`}
+                                  className="num mt-0.5 text-[11px] leading-tight text-ink-2"
+                                >
                                   {formatMoney(
                                     row.realizedPnlInBase,
                                     baseCurrency,
@@ -918,17 +1052,18 @@ export function HoldingsView({
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-3 py-3.5 text-right">
+                      <td className="whitespace-nowrap px-2 py-3 text-right">
                         <GainBadge
                           amount={row.totalReturn}
                           currency={row.currency}
                           percent={row.totalReturnPercent}
                           size="sm"
+                          layout="stacked"
                         />
                       </td>
 
                       {activeTab === "open" && (
-                        <td className="num whitespace-nowrap px-3 py-3.5 text-right text-ink-2">
+                        <td className="num whitespace-nowrap px-2 py-3 text-right text-[12.5px] text-ink-2">
                           {row.weightPercent
                             ? formatPercent(row.weightPercent, {
                                 fractionDigits: 1,
@@ -937,8 +1072,8 @@ export function HoldingsView({
                         </td>
                       )}
 
-                      <td className="px-2 py-3.5 text-right text-ink-3">
-                        <ChevronRight size={16} aria-hidden="true" />
+                      <td className="py-3 pl-1 pr-3 text-right text-ink-2">
+                        <ChevronRight size={15} aria-hidden="true" />
                       </td>
                     </tr>
                   );
@@ -957,19 +1092,19 @@ export function HoldingsView({
           <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-[15.5px] font-semibold tracking-tight text-ink">
+                <h2 className="text-[18px] font-semibold tracking-tight text-ink">
                   Prices Not Found
                 </h2>
-                <span className="num rounded-full bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
+                <span className="num rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-ink-2">
                   {notFoundOpenRows.length}
                 </span>
               </div>
-              <p className="mt-0.5 text-[12.5px] text-ink-3">
+              <p className="mt-1 text-[13px] text-ink-2">
                 Excluded from market-value totals and background quote polling.
                 Set a manual price or retry provider lookup anytime.
               </p>
               {retryFeedback && (
-                <p className="mt-1 text-[12px] font-medium text-accent">
+                <p className="mt-1 text-[12.5px] font-medium text-accent">
                   {retryFeedback}
                 </p>
               )}
@@ -979,7 +1114,6 @@ export function HoldingsView({
               <Button
                 variant="secondary"
                 size="xs"
-                shape="pill"
                 disabled={isRetrying}
                 onClick={() =>
                   void handleRetryLookup(retryableNotFoundSymbols)
@@ -987,7 +1121,7 @@ export function HoldingsView({
                 className="shrink-0 self-start sm:self-center"
               >
                 <RefreshCw
-                  size={12}
+                  size={14}
                   strokeWidth={1.9}
                   aria-hidden="true"
                   className={
@@ -1016,13 +1150,27 @@ export function HoldingsView({
                 quote?.priceNotFound ?? row.priceNotFound ?? bucket?.priceNotFound,
               );
               const isCanRetry = !isCrypto && !isDelisted;
+              const transition = !isDelisted
+                ? getSgxTickerTransition(row.symbol)
+                : null;
+              const hasPreTransitionOpenLot =
+                transition !== null &&
+                buckets.some(
+                  (b) =>
+                    b.symbol === row.symbol &&
+                    b.openLots.some(
+                      (lot) => lot.localDate <= transition.effectiveDate,
+                    ),
+                );
               const reasonLabel = isCrypto
                 ? "Crypto price disabled"
                 : isDelisted
                   ? "Delisted"
-                  : isNotFound
-                    ? "Not found on providers"
-                    : "Quote unavailable";
+                  : transition
+                    ? `Renamed to ${transition.newSymbol}`
+                    : isNotFound
+                      ? "Not found on providers"
+                      : "Quote unavailable";
               const reasonDetail =
                 !isCrypto && !isDelisted
                   ? (quote?.unavailableReason ?? bucket?.priceNotFoundReason)
@@ -1048,23 +1196,23 @@ export function HoldingsView({
                         {row.symbol}
                       </Link>
                       {exchangeLabel && (
-                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-ink-3">
+                        <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
                           {exchangeLabel}
                         </span>
                       )}
                       <span
                         title={reasonDetail ?? undefined}
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        className={`rounded-[6px] px-2 py-0.5 text-[11.5px] font-medium ${
                           isCrypto || isDelisted
-                            ? "bg-surface-2 text-ink-3"
-                            : "bg-accent/10 text-accent"
+                            ? "bg-surface-2 text-ink-2"
+                            : "bg-accent/12 text-accent"
                         }`}
                       >
                         {reasonLabel}
                       </span>
                     </div>
 
-                    <p className="mt-0.5 truncate text-[12.5px] text-ink-2">
+                    <p className="mt-0.5 truncate text-[13px] text-ink-2">
                       {row.name ?? "Unnamed instrument"}
                       {selectedPortfolioId === "all" &&
                       row.portfolioNames.length > 0
@@ -1072,7 +1220,13 @@ export function HoldingsView({
                         : ""}
                     </p>
 
-                    <p className="num mt-1 text-[12px] text-ink-3">
+                    {transition && (
+                      <p className="mt-0.5 text-[12px] text-ink-3">
+                        {transition.reason}
+                      </p>
+                    )}
+
+                    <p className="num mt-1 text-[12px] text-ink-2">
                       {formatQuantity(row.sharesHeld)} sh · Avg{" "}
                       {formatMoney(row.averageCostPerShare, row.currency, {
                         maximumFractionDigits: 4,
@@ -1083,16 +1237,36 @@ export function HoldingsView({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">
+                    {transition && bucket && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() =>
+                          setMigrationTarget({
+                            instrumentId: bucket.instrumentId,
+                            transition,
+                            defaultApplyConsolidation: hasPreTransitionOpenLot,
+                          })
+                        }
+                      >
+                        <ArrowRightLeft
+                          size={14}
+                          strokeWidth={1.9}
+                          aria-hidden="true"
+                        />
+                        <span>Update to {transition.newSymbol}</span>
+                      </Button>
+                    )}
+
                     {isCanRetry && (
                       <Button
                         variant="secondary"
                         size="xs"
-                        shape="pill"
                         disabled={isRetrying}
                         onClick={() => void handleRetryLookup([row.symbol])}
                       >
                         <RefreshCw
-                          size={12}
+                          size={14}
                           strokeWidth={1.9}
                           aria-hidden="true"
                           className={
@@ -1107,11 +1281,10 @@ export function HoldingsView({
                       <Button
                         variant="tinted"
                         size="xs"
-                        shape="pill"
                         onClick={() => openOverrideSheet(row.symbol)}
                       >
                         <SlidersHorizontal
-                          size={12}
+                          size={14}
                           strokeWidth={1.9}
                           aria-hidden="true"
                         />
@@ -1122,9 +1295,9 @@ export function HoldingsView({
                     <Link
                       href={detailHref}
                       aria-label={`Open ${row.symbol} details`}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-full text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
                     >
-                      <ChevronRight size={15} aria-hidden="true" />
+                      <ChevronRight size={16} aria-hidden="true" />
                     </Link>
                   </div>
                 </div>
@@ -1148,7 +1321,7 @@ export function HoldingsView({
       >
         {overrideTarget && (
           <form onSubmit={handleOverrideSubmit} className="space-y-4">
-            <label className="flex cursor-pointer items-start gap-3 rounded-[13px] border border-line bg-field-bg p-3.5">
+            <label className="flex cursor-pointer items-start gap-3 rounded-[12px] border border-line bg-field-bg p-3.5">
               <input
                 type="checkbox"
                 checked={isDelistedInput}
@@ -1186,7 +1359,7 @@ export function HoldingsView({
             </div>
 
             {overrideError && (
-              <p className="rounded-[11px] bg-loss/10 px-3 py-2 text-[13px] text-loss">
+              <p className="rounded-[10px] bg-loss/10 px-3 py-2 text-[13px] text-loss">
                 {overrideError}
               </p>
             )}
@@ -1226,6 +1399,14 @@ export function HoldingsView({
         )}
       </Sheet>
 
+      <PortfolioManageSheet
+        isOpen={isPortfolioSheetOpen}
+        portfolios={holdingsPortfolios}
+        initialSelectedPortfolioId={selectedPortfolioId}
+        onClose={() => setIsPortfolioSheetOpen(false)}
+        onChanged={() => router.refresh()}
+      />
+
       <TransactionSheet
         key={isTxSheetOpen ? "holdings-new-open" : "holdings-new-closed"}
         isOpen={isTxSheetOpen}
@@ -1236,6 +1417,23 @@ export function HoldingsView({
         defaultPortfolioId={
           selectedPortfolioId !== "all" ? selectedPortfolioId : undefined
         }
+      />
+
+      <TickerMigrationSheet
+        key={
+          migrationTarget
+            ? `migrate-${migrationTarget.instrumentId}-${migrationTarget.transition.newSymbol}`
+            : "migrate-closed"
+        }
+        target={migrationTarget}
+        onClose={() => setMigrationTarget(null)}
+        onMigrated={(targetSymbol) => {
+          setMigrationTarget(null);
+          setRetryFeedback(
+            `Updated ticker to ${targetSymbol}. Refreshing live SGX quote…`,
+          );
+          router.refresh();
+        }}
       />
     </div>
   );

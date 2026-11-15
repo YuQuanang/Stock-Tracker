@@ -1,4 +1,4 @@
-const STATIC_CACHE = "folio-static-v1";
+const STATIC_CACHE = "kestrel-static-v1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -11,7 +11,11 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key.startsWith("folio-static-") && key !== STATIC_CACHE)
+            .filter(
+              (key) =>
+                (key.startsWith("folio-static-") || key.startsWith("kestrel-static-")) &&
+                key !== STATIC_CACHE,
+            )
             .map((key) => caches.delete(key)),
         ),
       )
@@ -25,6 +29,9 @@ function isImmutableStaticPath(pathname) {
 
 function isStaticIconAsset(pathname) {
   return (
+    pathname === "/favicon.ico" ||
+    pathname === "/icon.svg" ||
+    pathname === "/icon" ||
     pathname.startsWith("/icons/") ||
     pathname.startsWith("/icon/") ||
     pathname === "/apple-icon"

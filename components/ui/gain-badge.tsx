@@ -7,8 +7,10 @@ interface GainBadgeProps {
   currency?: string;
   /** Signed percentage, e.g. `"12.4"` or `"-3.15"`. */
   percent?: string | number | null;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   pill?: boolean;
+  /** `"stacked"` places the signed amount above the percentage to keep table rows narrow. */
+  layout?: "inline" | "stacked";
 }
 
 /**
@@ -23,6 +25,7 @@ export function GainBadge({
   percent,
   size = "md",
   pill = false,
+  layout = "inline",
 }: GainBadgeProps) {
   const numericBasis =
     amount !== null && amount !== undefined && amount !== ""
@@ -36,10 +39,12 @@ export function GainBadge({
       ? "text-[16px] font-semibold"
       : size === "md"
         ? "text-[13.5px] font-medium"
-        : "text-[12.5px] font-medium";
+        : size === "xs"
+          ? "text-[11.5px] font-medium"
+          : "text-[12.5px] font-medium";
 
   if (!Number.isFinite(numericBasis)) {
-    return <span className={`num text-ink-3 ${nullSizeClass}`}>—</span>;
+    return <span className={`num text-ink-2 ${nullSizeClass}`}>—</span>;
   }
 
   const isPositive = numericBasis > 0;
@@ -60,17 +65,22 @@ export function GainBadge({
   const sizeClasses =
     size === "lg"
       ? pill
-        ? "px-3 py-0.5 text-[14.5px] font-semibold"
+        ? "px-2.5 py-0.5 text-[14px] font-semibold"
         : "text-[16px] font-semibold tracking-[-0.015em]"
-      : size === "sm"
+      : size === "xs"
         ? pill
-          ? "px-2 py-0.5 text-[12px] font-medium"
-          : "text-[12.5px] font-medium"
-        : pill
-          ? "px-2.5 py-0.5 text-[13px] font-medium"
-          : "text-[13.5px] font-medium";
+          ? "px-1.5 py-0.5 text-[11.5px] font-medium"
+          : "text-[11.5px] font-medium"
+        : size === "sm"
+          ? pill
+            ? "px-2 py-0.5 text-[12px] font-medium"
+            : "text-[12px] font-medium"
+          : pill
+            ? "px-2 py-0.5 text-[13px] font-medium"
+            : "text-[13.5px] font-medium";
 
-  const iconSize = size === "lg" ? 15 : size === "sm" ? 13 : 14;
+  const iconSize = size === "lg" ? 16 : size === "xs" ? 11 : 14;
+  const gapClass = size === "xs" ? "gap-px" : "gap-0.5";
 
   const formattedAmount =
     amount !== null && amount !== undefined && amount !== ""
@@ -82,17 +92,46 @@ export function GainBadge({
       ? formatPercent(percent, { signed: true })
       : null;
 
+  const arrowIcon = isPositive ? (
+    <ArrowUpRight size={iconSize} strokeWidth={2.1} aria-hidden="true" />
+  ) : isNegative ? (
+    <ArrowDownRight size={iconSize} strokeWidth={2.1} aria-hidden="true" />
+  ) : (
+    <Minus size={iconSize - 1} strokeWidth={2} aria-hidden="true" />
+  );
+
+  if (layout === "stacked") {
+    const percentClass =
+      size === "lg"
+        ? "text-[13px]"
+        : size === "xs"
+          ? "text-[10.5px]"
+          : size === "sm"
+            ? "text-[11px]"
+            : "text-[11.5px]";
+
+    return (
+      <span
+        className={`num inline-flex flex-col items-end rounded-[8px] leading-tight ${toneClasses} ${sizeClasses}`}
+      >
+        <span className={`inline-flex items-center ${gapClass}`}>
+          {arrowIcon}
+          <span>{formattedAmount ?? formattedPercent}</span>
+        </span>
+        {formattedAmount && formattedPercent && (
+          <span className={`${percentClass} font-normal`}>
+            {formattedPercent}
+          </span>
+        )}
+      </span>
+    );
+  }
+
   return (
     <span
-      className={`num inline-flex items-center gap-0.5 rounded-full ${toneClasses} ${sizeClasses}`}
+      className={`num inline-flex items-center ${gapClass} rounded-[8px] ${toneClasses} ${sizeClasses}`}
     >
-      {isPositive ? (
-        <ArrowUpRight size={iconSize} strokeWidth={2.1} aria-hidden="true" />
-      ) : isNegative ? (
-        <ArrowDownRight size={iconSize} strokeWidth={2.1} aria-hidden="true" />
-      ) : (
-        <Minus size={iconSize - 1} strokeWidth={2} aria-hidden="true" />
-      )}
+      {arrowIcon}
       {formattedAmount && <span>{formattedAmount}</span>}
       {formattedAmount && formattedPercent && (
         <span className="opacity-85">({formattedPercent})</span>

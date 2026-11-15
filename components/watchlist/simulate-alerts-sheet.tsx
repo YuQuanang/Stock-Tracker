@@ -202,10 +202,11 @@ function SimulateAlertsForm({
   return (
     <form onSubmit={handleSave} className="space-y-5">
       {/* Live quote strip */}
-      <div className="flex items-center justify-between gap-4 rounded-[14px] border border-line bg-surface-2/70 px-4 py-3">
+      <div className="flex items-center justify-between gap-4 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
-            Current price · {item.freshnessLabel}
+          <p className="text-[12px] font-medium text-ink-2">
+            Current price ·{" "}
+            <span className="font-mono text-ink-3">{item.freshnessLabel}</span>
           </p>
           <p className="num mt-0.5 text-[22px] font-semibold tracking-tight text-ink">
             {item.unitPrice
@@ -453,7 +454,7 @@ function SimulateAlertsForm({
                 Simulation will be removed when you save.
               </p>
             ) : (
-              <p className="text-[12.5px] text-ink-3">
+              <p className="text-[12.5px] text-ink-2">
                 Select a date and amount, then tap <strong>Simulate</strong>{" "}
                 to calculate exact shares and compare against{" "}
                 {defaultBenchmark}.
@@ -466,7 +467,7 @@ function SimulateAlertsForm({
       {saveError && (
         <div
           role="alert"
-          className="flex items-center gap-2 rounded-[12px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
+          className="flex items-center gap-2 rounded-[10px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
         >
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{saveError}</span>
@@ -520,17 +521,20 @@ function SimulationResultCard(props: {
     : null;
 
   return (
-    <div className="space-y-2.5 rounded-[14px] border border-line bg-surface-2/70 p-4">
+    <div className="space-y-2.5 rounded-[12px] border border-line bg-surface-2 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="num text-[12.5px] font-medium text-ink-2">
             Bought {formatQuantity(props.shares)} sh of{" "}
-            {formatSymbolForDisplay(props.symbol)} on {props.entryDate} @{" "}
+            <span className="font-mono font-semibold text-ink">
+              {formatSymbolForDisplay(props.symbol)}
+            </span>{" "}
+            on <span className="font-mono">{props.entryDate}</span> @{" "}
             {formatMoney(props.entryPrice, props.currency)}
           </p>
           <p className="num mt-0.5 text-[19px] font-semibold tracking-tight text-ink">
             {formatMoney(props.currentValue, props.currency)}
-            <span className="ml-2 text-[12.5px] font-normal text-ink-3">
+            <span className="ml-2 text-[12.5px] font-normal text-ink-2">
               from {formatMoney(props.amount, props.currency)}
             </span>
           </p>

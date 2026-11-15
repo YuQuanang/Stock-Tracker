@@ -14,7 +14,7 @@ export default async function HoldingsPage() {
     <>
       <PageHeader
         title="Holdings"
-        subtitle="Open and closed positions derived from your FIFO ledger, valued in native currency and SGD."
+        subtitle="Open and closed FIFO positions in native currency and SGD."
       />
       <HoldingsView
         portfolios={snapshot.portfolios}

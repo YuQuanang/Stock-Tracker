@@ -15,11 +15,12 @@ import {
   Sun,
   Trash2,
 } from "lucide-react";
+import { PortfolioRenameList } from "@/components/portfolios/portfolio-manage-sheet";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
-import type { Settings } from "@/db/schema";
+import type { Portfolio, Settings } from "@/db/schema";
 import { fadeQuick, springSmooth } from "@/lib/motion";
 import {
   GAIN_SCHEME_STORAGE_KEY,
@@ -32,6 +33,7 @@ import { formatSymbolForDisplay } from "@/lib/transactions/form-logic";
 
 interface SettingsViewProps {
   initialSettings: Settings;
+  initialPortfolios?: Portfolio[];
 }
 
 function SettingsSelect({
@@ -48,8 +50,8 @@ function SettingsSelect({
         {children}
       </select>
       <ChevronDown
-        size={14}
-        className="pointer-events-none absolute right-2.5 text-ink-3"
+        size={16}
+        className="pointer-events-none absolute right-2.5 text-ink-2"
         aria-hidden="true"
       />
     </div>
@@ -96,13 +98,7 @@ function applyDomPreferences(
   } catch {
     // Ignore restricted storage mode cleanly.
   }
-  const prefersDark =
-    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
-  const useDark = theme === "dark" || (theme === "system" && prefersDark);
-  document.documentElement.setAttribute(
-    "data-theme",
-    useDark ? "dark" : "light",
-  );
+  document.documentElement.setAttribute("data-theme", "dark");
   document.documentElement.setAttribute("data-gain-scheme", gainScheme);
   window.dispatchEvent(new Event("folio-theme-change"));
 }
@@ -110,7 +106,10 @@ function applyDomPreferences(
 /**
  * Persisted Portfolio & Display Settings (`components/settings/settings-view.tsx`).
  */
-export function SettingsView({ initialSettings }: SettingsViewProps) {
+export function SettingsView({
+  initialSettings,
+  initialPortfolios = [],
+}: SettingsViewProps) {
   const router = useRouter();
   const [savedSettings, setSavedSettings] = useState<Settings>(initialSettings);
   const latestSettingsRef = useRef<Settings>(initialSettings);
@@ -284,7 +283,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
             className={`flex items-center gap-2 rounded-[12px] border px-4 py-2.5 text-[13px] ${
               saveError
                 ? "border-loss/30 bg-loss/10 text-loss"
-                : "border-gain/30 bg-gain/10 text-gain"
+                : "border-accent/30 bg-accent/10 text-accent"
             }`}
           >
             {saveError ? (
@@ -299,7 +298,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
 
       {/* Section 1: Portfolio & Calculation Settings */}
       <section className="space-y-2.5">
-        <h2 className="px-1 text-[13px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+        <h2 className="px-1 text-[13px] font-medium text-ink-2">
           Portfolio &amp; Calculations
         </h2>
         <Card className="divide-y divide-line">
@@ -355,7 +354,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
                   }}
                   className="field-input num h-9.5 w-26 bg-field-bg pl-3 pr-7 text-[13.5px]"
                 />
-                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[12.5px] text-ink-3">
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[12.5px] text-ink-2">
                   %
                 </span>
               </div>
@@ -480,16 +479,42 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
                 Tax-lot matching across all transactions and Sell All events.
               </p>
             </div>
-            <span className="rounded-full border border-line bg-surface-2 px-3 py-1 text-[12.5px] font-medium text-ink">
+            <span className="rounded-[8px] border border-line bg-surface-2 px-3 py-1 text-[12.5px] font-medium text-ink">
               FIFO (First-In, First-Out)
             </span>
+          </div>
+
+          <div className="space-y-3 px-4 py-4 sm:px-6 sm:py-4.5">
+            <div>
+              <p className="font-medium text-ink">Portfolio Names</p>
+              <p className="text-[13.5px] text-ink-2">
+                Rename any holdings portfolio or watchlist across your ledger
+                and exports.
+              </p>
+            </div>
+            <PortfolioRenameList
+              portfolios={initialPortfolios}
+              showTypeBadge
+              onRenamed={(updated) => {
+                setSaveError(null);
+                setSaveStatus(`Renamed portfolio to "${updated.name}"`);
+                if (statusTimerRef.current) {
+                  clearTimeout(statusTimerRef.current);
+                }
+                statusTimerRef.current = setTimeout(() => {
+                  setSaveStatus(null);
+                }, 2200);
+                router.refresh();
+              }}
+              emptyMessage="No portfolios or watchlists created yet."
+            />
           </div>
         </Card>
       </section>
 
       {/* Section 2: Appearance & Display */}
       <section className="space-y-2.5">
-        <h2 className="px-1 text-[13px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+        <h2 className="px-1 text-[13px] font-medium text-ink-2">
           Appearance &amp; Display
         </h2>
         <Card className="divide-y divide-line">
@@ -497,12 +522,12 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
             <div className="min-w-0">
               <p className="font-medium text-ink">Theme</p>
               <p className="text-[13.5px] text-ink-2">
-                Follow your system setting or lock Light / Dark mode across
-                sessions.
+                Dark Graphite is active across all views; stored preference is
+                preserved.
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-ink-3" aria-hidden="true">
+              <span className="text-ink-2" aria-hidden="true">
                 {currentTheme === "dark" ? (
                   <Moon className="h-4 w-4" />
                 ) : currentTheme === "light" ? (
@@ -532,7 +557,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
                 cards, badges, and charts.
               </p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-[11.5px] text-ink-3">Preview:</span>
+                <span className="text-[12px] text-ink-2">Preview:</span>
                 <GainBadge
                   amount="1240.50"
                   currency={savedSettings.baseCurrency}
@@ -640,7 +665,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
 
       {/* Section 3: Data & Backups */}
       <section className="space-y-2.5">
-        <h2 className="px-1 text-[13px] font-semibold uppercase tracking-[0.05em] text-ink-3">
+        <h2 className="px-1 text-[13px] font-medium text-ink-2">
           Data &amp; Backups
         </h2>
         <Card className="divide-y divide-line">
@@ -728,7 +753,7 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={fadeQuick}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[#090B10]/75 p-4"
             onClick={(e) => {
               if (e.target === e.currentTarget && !isDeleting) {
                 setDeleteDialogOpen(false);
@@ -747,9 +772,9 @@ export function SettingsView({ initialSettings }: SettingsViewProps) {
               transition={springSmooth}
               className="w-full max-w-md"
             >
-              <Card className="space-y-4 p-5 sm:p-6 shadow-xl">
+              <Card raised className="space-y-4 p-5 sm:p-6">
                 <div className="flex items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-loss/12 text-loss">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-line bg-surface-2 text-ink-2">
                     <AlertTriangle className="h-5 w-5" aria-hidden="true" />
                   </span>
                   <div className="min-w-0">

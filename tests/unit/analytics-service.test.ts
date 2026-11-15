@@ -6,6 +6,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
+import { filterPointsByAnalyticsRange } from "@/lib/charts/theme";
 import {
   clearFxCache,
   clearHistoryCaches,
@@ -216,6 +217,20 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     expect(sgdSnapshot.performance.xirrPercent).not.toBeNull();
     expect(sgdSnapshot.performance.volatilityPercent).not.toBeNull();
     expect(sgdSnapshot.performance.drawdown.maxDrawdownPercent).not.toBeNull();
+    expect(sgdSnapshot.performance.periodReturns["3Y"]).not.toBeNull();
+    expect(sgdSnapshot.performance.periodReturns["5Y"]).not.toBeNull();
+    expect(sgdSnapshot.performance.periodReturns.ALL).toBe(
+      sgdSnapshot.performance.cumulativeTwrPercent,
+    );
+
+    // Multi-year portfolio (inception <= 2021-09-29) retains 3Y, 5Y, and MAX timeline spans
+    const range3y = filterPointsByAnalyticsRange(sgdSnapshot.timeline.points, "3Y");
+    const range5y = filterPointsByAnalyticsRange(sgdSnapshot.timeline.points, "5Y");
+    const rangeMax = filterPointsByAnalyticsRange(sgdSnapshot.timeline.points, "MAX");
+    expect(range3y[0]?.date).toBe("2023-11-06");
+    expect(range5y[0]?.date).toBe("2021-11-08"); // 2021-11-06 is Saturday -> next weekday 2021-11-08
+    expect(rangeMax[0]?.date).toBe(sgdSnapshot.timeline.points[0]?.date);
+    expect(rangeMax[0]?.date <= "2021-09-29").toBe(true);
 
     // Allocations sum to ~100% across open priced holdings
     const totalPct = sgdSnapshot.allocations.instrument.reduce(
@@ -242,6 +257,18 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     expect(Number(sp500Sgd?.sameCashFlows?.totalDeposited)).toBeGreaterThan(0);
     expect(sp500Sgd?.betaVsPortfolio).not.toBeNull();
     expect(sp500Sgd?.correlationVsPortfolio).not.toBeNull();
+    expect(sp500Sgd?.periodReturns["3Y"]).not.toBeNull();
+    expect(sp500Sgd?.periodReturns["5Y"]).not.toBeNull();
+    expect(sp500Sgd?.periodReturns.ALL).toBe(sp500Sgd?.cumulativeReturnPercent);
+    expect(
+      filterPointsByAnalyticsRange(sp500Sgd!.rebasedSeries, "3Y")[0]?.date,
+    ).toBe("2023-11-06");
+    expect(
+      filterPointsByAnalyticsRange(sp500Sgd!.rebasedSeries, "5Y")[0]?.date,
+    ).toBe("2021-11-08");
+    expect(
+      filterPointsByAnalyticsRange(sp500Sgd!.sameCashFlows!.dailySeries, "5Y")[0]?.date,
+    ).toBe("2021-11-08");
 
     // Switching comparison currency to USD aligns STI (SGD -> USD) cleanly too
     const usdSnapshot = await computePortfolioAnalytics({
@@ -277,6 +304,12 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     expect(scopedSnapshot.allocations.currency.map((c) => c.key)).toEqual([
       "USD",
     ]);
+    expect(scopedSnapshot.performance.periodReturns["3Y"]).not.toBeNull();
+    expect(scopedSnapshot.performance.periodReturns["5Y"]).not.toBeNull();
+    expect(scopedSnapshot.performance.periodReturns.ALL).toBe(
+      scopedSnapshot.performance.cumulativeTwrPercent,
+    );
+    expect(scopedSnapshot.timeline.points[0]?.date).toBe("2021-04-23");
   }, 20_000);
 
   it("persists settings updates, validates inputs, recalculates dividend FX mode, and wipes data cleanly", async () => {

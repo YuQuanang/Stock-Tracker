@@ -14,6 +14,7 @@ import {
   getEnrichedTransactionById,
   LedgerUserError,
   listEnrichedTransactions,
+  updatePortfolio,
   updateTransaction,
 } from "@/lib/services/ledger";
 
@@ -344,6 +345,139 @@ describe("Ledger service CRUD and FIFO rollback invariants", () => {
     const savedMissingFx = await getEnrichedTransactionById(missingFxUsd.id, db);
     expect(savedMissingFx?.fxRateToSgd).toBeNull();
     expect(savedMissingFx?.totalCostSgd).toBeNull();
+  });
+
+  it("renames portfolios safely with validation and duplicate-name conflict checks", async () => {
+    const us = await createPortfolio(
+      { name: "US Stocks", type: "holdings", defaultCurrency: "USD" },
+      db,
+    );
+    await createPortfolio(
+      { name: "SG Stocks", type: "holdings", defaultCurrency: "SGD" },
+      db,
+    );
+
+    const tx = await createTransaction(
+      {
+        portfolioId: us.id,
+        symbol: "AAPL",
+        type: "Buy",
+        quantity: "5",
+        price: "200",
+        date: "2026-01-15",
+      },
+      db,
+    );
+
+    // Renaming updates returned portfolio & joined enriched transactions
+    const renamed = await updatePortfolio(
+      us.id,
+      { name: "  US Growth  " },
+      db,
+    );
+    expect(renamed.name).toBe("US Growth");
+    const enriched = await getEnrichedTransactionById(tx.id, db);
+    expect(enriched?.portfolioName).toBe("US Growth");
+
+    // Saving the same name idempotently or with an empty patch succeeds
+    const sameName = await updatePortfolio(us.id, { name: "US Growth" }, db);
+    expect(sameName.name).toBe("US Growth");
+    const noOp = await updatePortfolio(us.id, {}, db);
+    expect(noOp.id).toBe(us.id);
+
+    // Blank names reject with 400
+    await expect(
+      updatePortfolio(us.id, { name: "   " }, db),
+    ).rejects.toThrow(/cannot be empty/i);
+
+    // Renaming onto another existing portfolio rejects with 409 conflict
+    await expect(
+      updatePortfolio(us.id, { name: "SG Stocks" }, db),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    // Unknown portfolio rejects with 404
+    await expect(
+      updatePortfolio("00000000-0000-4000-8000-000000000099", { name: "X" }, db),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("updates individual transaction fields (quantity, price, FX rate, commission, notes, portfolio)", async () => {
+    const main = await createPortfolio(
+      { name: "US Main", type: "holdings", defaultCurrency: "USD" },
+      db,
+    );
+    const alt = await createPortfolio(
+      { name: "US Speculative", type: "holdings", defaultCurrency: "USD" },
+      db,
+    );
+
+    const created = await createTransaction(
+      {
+        portfolioId: main.id,
+        symbol: "MSFT",
+        instrumentName: "Microsoft Corporation",
+        exchangeCode: "NMS",
+        type: "Buy",
+        quantity: "2",
+        price: "400",
+        commission: "1",
+        currency: "USD",
+        date: "2026-02-01",
+        time: "10:00:00",
+        offset: "+0800",
+        fxRateToSgd: "1.30",
+        isManualPrice: true,
+        isManualFxRate: true,
+        notes: "Initial thesis",
+      },
+      db,
+    );
+
+    await updateTransaction(
+      created.id,
+      {
+        portfolioId: alt.id,
+        symbol: "MSFT",
+        instrumentName: "Microsoft Corporation",
+        exchangeCode: "NMS",
+        type: "Buy",
+        quantity: "4",
+        price: "410",
+        commission: "2.50",
+        currency: "USD",
+        date: "2026-02-02",
+        time: "14:30:00",
+        offset: "+0800",
+        purchaseFxRate: "1.32",
+        purchaseFxCurrencies: "USD/SGD",
+        fxRateToSgd: "1.32",
+        fxSource: "manual",
+        isManualPrice: true,
+        isManualFxRate: true,
+        notes: "Updated thesis & portfolio",
+      },
+      db,
+    );
+
+    const updated = await getEnrichedTransactionById(created.id, db);
+    expect(updated).toMatchObject({
+      portfolioId: alt.id,
+      portfolioName: "US Speculative",
+      quantity: "4",
+      price: "410",
+      commissionRaw: "2.50",
+      localDate: "2026-02-02",
+      localTime: "14:30:00",
+      fxRateToSgd: "1.32",
+      // 4 * 410 * 1.32 = 2164.8
+      totalCostSgd: "2164.8",
+      notes: "Updated thesis & portfolio",
+    });
+
+    const summary = await computeLedgerSummaries(undefined, db);
+    expect(summary.positions).toHaveLength(1);
+    expect(summary.positions[0]?.portfolioId).toBe(alt.id);
+    expect(summary.positions[0]?.sharesHeld).toBe("4");
   });
 });
 

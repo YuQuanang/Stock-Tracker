@@ -95,7 +95,7 @@ export function AllocationDonut({
       </div>
 
       {slices.length === 0 ? (
-        <div className="my-auto flex h-48 items-center justify-center rounded-[14px] border border-dashed border-line bg-surface-2/40 text-center text-[13px] text-ink-3">
+        <div className="my-auto flex h-48 items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
           No priced open holdings to allocate in this view.
         </div>
       ) : (
@@ -148,13 +148,13 @@ export function AllocationDonut({
               <div className="pointer-events-none absolute inset-6 flex flex-col items-center justify-center text-center">
                 {focusedSlice ? (
                   <>
-                    <span className="max-w-[116px] truncate text-[11px] font-medium text-ink-3">
+                    <span className="max-w-[116px] truncate text-[12px] font-medium text-ink-2">
                       {focusedSlice.label}
                     </span>
-                    <span className="num mt-0.5 text-[16px] font-semibold tracking-[-0.02em] text-ink">
+                    <span className="num mt-0.5 text-[16px] font-semibold tracking-[-0.015em] text-ink">
                       {formatPercent(focusedSlice.percent)}
                     </span>
-                    <span className="num text-[11px] text-ink-2">
+                    <span className="num text-[12px] text-ink-2">
                       {formatMoney(focusedSlice.valueInBase, currency, {
                         maximumFractionDigits: 0,
                       })}
@@ -162,15 +162,15 @@ export function AllocationDonut({
                   </>
                 ) : (
                   <>
-                    <span className="text-[11px] font-medium text-ink-3">
+                    <span className="text-[12px] font-medium text-ink-2">
                       Open Value
                     </span>
-                    <span className="num mt-0.5 text-[15px] font-semibold tracking-[-0.02em] text-ink">
+                    <span className="num mt-0.5 text-[16px] font-semibold tracking-[-0.015em] text-ink">
                       {formatMoney(totalValue, currency, {
                         maximumFractionDigits: 0,
                       })}
                     </span>
-                    <span className="text-[11px] text-ink-3">
+                    <span className="text-[12px] text-ink-3">
                       {slices.length} group{slices.length === 1 ? "" : "s"}
                     </span>
                   </>
@@ -186,7 +186,7 @@ export function AllocationDonut({
                 onExpandedChange?.(next);
               }}
               aria-expanded={isExpanded}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-2/75 px-3.5 py-1.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-accent"
+              className="inline-flex h-8.5 items-center gap-1.5 rounded-[10px] border border-line bg-surface-2 px-3 text-[12px] font-medium text-ink-2 transition-colors hover:border-ink-3/60 hover:text-ink"
             >
               <span>
                 {isExpanded
@@ -194,9 +194,10 @@ export function AllocationDonut({
                   : `Show breakdown (${slices.length})`}
               </span>
               <ChevronDown
-                size={14}
+                size={16}
+                strokeWidth={1.75}
                 aria-hidden="true"
-                className={`transition-transform duration-200 ${
+                className={`transition-transform duration-150 ${
                   isExpanded ? "rotate-180" : ""
                 }`}
               />
@@ -221,7 +222,7 @@ export function AllocationDonut({
                 className="overflow-hidden"
               >
                 {/* Interactive Legend List */}
-                <ul className="space-y-1 border-t border-line/60 pt-3">
+                <ul className="space-y-1 border-t border-line pt-3">
                   {segments.map((seg) => {
                     const isHighlighted = activeKey === seg.key;
                     return (
@@ -237,15 +238,15 @@ export function AllocationDonut({
                               prev === seg.key ? null : seg.key,
                             )
                           }
-                          className={`flex w-full items-center justify-between gap-3 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-accent ${
+                          className={`flex w-full items-center justify-between gap-3 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors ${
                             isHighlighted
                               ? "bg-surface-2 text-ink"
-                              : "text-ink-2 hover:bg-surface-2/60 hover:text-ink"
+                              : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                           }`}
                         >
                           <span className="flex min-w-0 flex-1 items-center gap-2.5">
                             <span
-                              className={`h-3 w-3 shrink-0 rounded-full ring-1 ring-black/10 dark:ring-white/20 transition-transform duration-150 ${
+                              className={`h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-line transition-transform duration-150 ${
                                 isHighlighted ? "scale-115" : ""
                               }`}
                               style={{ backgroundColor: seg.color }}
@@ -258,7 +259,7 @@ export function AllocationDonut({
                             <span className="font-semibold text-ink">
                               {formatPercent(seg.percent)}
                             </span>
-                            <span className="ml-2 text-ink-3">
+                            <span className="ml-2 text-ink-2">
                               {formatMoney(seg.valueInBase, currency, {
                                 maximumFractionDigits: 0,
                               })}
@@ -271,7 +272,7 @@ export function AllocationDonut({
                 </ul>
 
                 {dimension === "sector" && hasMissingSector && (
-                  <p className="mt-3 text-[11.5px] text-ink-3">
+                  <p className="mt-3 text-[12px] text-ink-3">
                     ETFs, REITs, and equities without a Finnhub sector tag are
                     grouped by fund type or labeled Unclassified.
                   </p>

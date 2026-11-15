@@ -55,12 +55,9 @@ function formatScheduleLine(
 function StatusDot({ isOpen }: { isOpen: boolean }) {
   return (
     <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
-      {isOpen && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gain opacity-70" />
-      )}
       <span
         className={`relative inline-flex h-2 w-2 rounded-full ${
-          isOpen ? "bg-gain" : "bg-ink-3/75"
+          isOpen ? "bg-accent" : "bg-ink-3"
         }`}
       />
     </span>
@@ -111,7 +108,7 @@ export function MarketStatusBadge({
             <div
               key={code}
               title={`${fullLabel}: ${isOpen ? "Open" : "Closed"} · ${schedule}`}
-              className="flex w-12 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface-2/80 px-1.5 py-1 text-[10.5px] font-semibold text-ink-2"
+              className="flex w-12 items-center justify-center gap-1.5 rounded-[8px] border border-line bg-surface-2 px-1.5 py-1 text-[11px] font-semibold text-ink-2"
             >
               <StatusDot isOpen={isOpen} />
               <span>{code}</span>
@@ -136,22 +133,22 @@ export function MarketStatusBadge({
             <div
               key={code}
               title={fullLabel}
-              className="rounded-[11px] border border-line bg-surface-2/75 px-2.5 py-1.5"
+              className="rounded-[10px] border border-line bg-surface-2 px-2.5 py-1.5"
             >
-              <div className="flex items-center justify-between gap-1.5 text-[11.5px] leading-4">
+              <div className="flex items-center justify-between gap-1.5 text-[12px] leading-4">
                 <span className="inline-flex items-center gap-1.5 font-semibold text-ink">
                   <StatusDot isOpen={isOpen} />
                   <span>{code}</span>
                 </span>
                 <span
                   className={
-                    isOpen ? "font-medium text-gain" : "font-medium text-ink-3"
+                    isOpen ? "font-medium text-accent" : "font-medium text-ink-3"
                   }
                 >
                   {session ? (isOpen ? "Open" : "Closed") : "…"}
                 </span>
               </div>
-              <p className="num mt-0.5 text-[11px] leading-4 text-ink-2">
+              <p className="font-mono mt-0.5 text-[11px] leading-4 text-ink-2">
                 {schedule}
               </p>
             </div>
@@ -161,12 +158,12 @@ export function MarketStatusBadge({
     );
   }
 
-  // Default `"sidebar"` layout: clean Apple grouped card with US & SGX stacked
+  // Default `"sidebar"` layout: US & SGX stacked cleanly
   return (
     <div
       role="status"
       aria-label={overview?.detailLabel ?? "US and SGX market hours"}
-      className="divide-y divide-line rounded-[var(--radius-control)] border border-line bg-surface-2/70"
+      className="divide-y divide-line rounded-[12px] border border-line bg-surface-2"
     >
       {venues.map(({ code, fullLabel, session }) => {
         const isOpen = session?.isOpen ?? false;
@@ -180,13 +177,13 @@ export function MarketStatusBadge({
               </span>
               <span
                 className={
-                  isOpen ? "font-medium text-gain" : "font-medium text-ink-3"
+                  isOpen ? "font-medium text-accent" : "font-medium text-ink-3"
                 }
               >
                 {session ? (isOpen ? "Open" : "Closed") : "…"}
               </span>
             </div>
-            <p className="num mt-0.5 text-[11.5px] leading-4 text-ink-2">
+            <p className="font-mono mt-0.5 text-[11px] leading-4 text-ink-2">
               {schedule}
             </p>
           </div>

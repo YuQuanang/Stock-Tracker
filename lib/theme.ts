@@ -20,10 +20,7 @@ export const GAIN_SCHEME_STORAGE_KEY = "folio-gain-scheme";
 export const THEME_INIT_SCRIPT = `
 (function () {
   try {
-    var preference = localStorage.getItem("${THEME_STORAGE_KEY}") || "system";
-    var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    var useDark = preference === "dark" || (preference === "system" && prefersDark);
-    document.documentElement.setAttribute("data-theme", useDark ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", "dark");
 
     var gainScheme = localStorage.getItem("${GAIN_SCHEME_STORAGE_KEY}");
     if (gainScheme) {

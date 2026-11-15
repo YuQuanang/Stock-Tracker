@@ -180,11 +180,11 @@ export function CorporateActionsSheet({
       </form>
 
       <div className="mt-5 border-t border-line pt-4">
-        <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-3">
+        <h3 className="mb-2 text-[12px] font-medium text-ink-2">
           Recorded splits
         </h3>
         {actions.length === 0 ? (
-          <p className="py-3 text-[13.5px] text-ink-3">
+          <p className="py-3 text-[13.5px] text-ink-2">
             No manual stock splits recorded.
           </p>
         ) : (
@@ -198,16 +198,16 @@ export function CorporateActionsSheet({
                   <span className="font-mono font-semibold">{action.symbol}</span>
                   <span className="ml-2 num text-ink-2">
                     {action.ratioNumerator}:{action.ratioDenominator} on{" "}
-                    {action.exDate}
+                    <span className="font-mono">{action.exDate}</span>
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleDelete(action.id)}
                   aria-label={`Remove split for ${action.symbol}`}
-                  className="rounded-lg p-1.5 text-ink-3 transition-colors hover:bg-surface-2 hover:text-loss"
+                  className="rounded-[8px] p-1.5 text-ink-2 transition-colors hover:bg-surface-2 hover:text-loss"
                 >
-                  <Trash2 size={15} aria-hidden="true" />
+                  <Trash2 size={16} aria-hidden="true" />
                 </button>
               </li>
             ))}

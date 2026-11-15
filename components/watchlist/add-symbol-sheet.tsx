@@ -4,6 +4,7 @@ import { AlertCircle, Check, Loader2, Plus, Search } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { SymbolSearchMatch } from "@/lib/market-data/search";
 import {
   ClientMarketError,
@@ -75,10 +76,12 @@ function AddSymbolSheetForm({
   const [searchedQuery, setSearchedQuery] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAdded, setIsAdded] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const searchSeqRef = useRef(0);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cacheRef = useRef(new Map<string, SymbolSearchMatch[]>());
 
   useEffect(() => {
@@ -153,6 +156,9 @@ function AddSymbolSheetForm({
   useEffect(() => {
     return () => {
       searchAbortRef.current?.abort();
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+      }
     };
   }, []);
 
@@ -164,6 +170,7 @@ function AddSymbolSheetForm({
   }) {
     setSubmitError(null);
     setIsSubmitting(true);
+    setIsAdded(false);
 
     try {
       const response = await fetch("/api/watchlists/items", {
@@ -187,8 +194,18 @@ function AddSymbolSheetForm({
         return;
       }
 
+      setIsSubmitting(false);
+      setIsAdded(true);
       onAdded();
-      onClose();
+      const reducedMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      closeTimerRef.current = setTimeout(
+        () => {
+          onClose();
+        },
+        reducedMotion ? 80 : 380,
+      );
     } catch {
       setSubmitError("Network error while saving watchlist item.");
       setIsSubmitting(false);
@@ -256,14 +273,21 @@ function AddSymbolSheetForm({
             searchError ||
             matches.length > 0 ||
             searchedQuery) && (
-            <div className="mt-2 max-h-60 divide-y divide-line overflow-y-auto rounded-[14px] border border-line bg-surface shadow-sm">
+            <div className="mt-2 max-h-60 divide-y divide-line overflow-y-auto rounded-[12px] border border-line bg-surface">
               {isSearching && matches.length === 0 && (
-                <div className="flex items-center gap-2 px-3.5 py-3 text-[13px] text-ink-2">
-                  <Loader2
-                    className="h-3.5 w-3.5 animate-spin"
-                    aria-hidden="true"
-                  />
-                  Searching live symbols...
+                <div className="divide-y divide-line" aria-busy="true">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between gap-3 px-3.5 py-2.5"
+                    >
+                      <div className="space-y-1.5">
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-3 w-40" />
+                      </div>
+                      <Skeleton className="h-4 w-12" />
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -295,14 +319,14 @@ function AddSymbolSheetForm({
                       setQuery(match.symbol);
                       setSubmitError(null);
                     }}
-                    className="flex w-full cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex w-full cursor-pointer items-center justify-between gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-[14px] font-semibold text-ink">
                           {formatSymbolForDisplay(match.symbol)}
                         </span>
-                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
+                        <span className="rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium text-ink-2">
                           {match.exchangeDisplay ||
                             formatExchangeCodeForDisplay(match.exchangeCode) ||
                             match.currency}
@@ -314,7 +338,7 @@ function AddSymbolSheetForm({
                     </div>
 
                     {alreadyAdded ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-ink-3">
+                      <span className="inline-flex shrink-0 items-center gap-1 text-[12px] font-medium text-ink-2">
                         <Check className="h-3.5 w-3.5" aria-hidden="true" />
                         In list
                       </span>
@@ -331,13 +355,13 @@ function AddSymbolSheetForm({
       </div>
 
       {selected && (
-        <div className="flex items-center justify-between gap-3 rounded-[13px] border border-line bg-surface-2/70 px-3.5 py-2.5">
+        <div className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-3.5 py-2.5">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-mono text-[14px] font-semibold text-ink">
                 {formatSymbolForDisplay(selected.symbol)}
               </span>
-              <span className="rounded bg-surface px-1.5 py-0.5 text-[10.5px] font-medium text-ink-2">
+              <span className="rounded-[6px] border border-line bg-surface px-1.5 py-0.5 text-[10.5px] font-medium text-ink-2">
                 {selected.exchangeDisplay || selected.currency}
               </span>
             </div>
@@ -345,7 +369,7 @@ function AddSymbolSheetForm({
               {selected.name}
             </p>
           </div>
-          <span className="shrink-0 text-[11.5px] font-semibold text-gain">
+          <span className="shrink-0 text-[12px] font-semibold text-accent">
             Ready to add
           </span>
         </div>
@@ -396,7 +420,7 @@ function AddSymbolSheetForm({
       {submitError && (
         <div
           role="alert"
-          className="flex items-center gap-2 rounded-[12px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
+          className="flex items-center gap-2 rounded-[10px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
         >
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{submitError}</span>
@@ -408,16 +432,24 @@ function AddSymbolSheetForm({
           type="button"
           variant="ghost"
           onClick={onClose}
+          disabled={isSubmitting || isAdded}
           className="px-4 py-2 text-[14px]"
         >
           Cancel
         </Button>
         <Button
           type="submit"
-          disabled={isSubmitting || (!selected && query.trim().length === 0)}
+          disabled={
+            isSubmitting || isAdded || (!selected && query.trim().length === 0)
+          }
           className="px-4 py-2 text-[14px]"
         >
-          {isSubmitting ? (
+          {isAdded ? (
+            <>
+              <Check className="h-4 w-4" aria-hidden="true" />
+              Added ✓
+            </>
+          ) : isSubmitting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               Adding...

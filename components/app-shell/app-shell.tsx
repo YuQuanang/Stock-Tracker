@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
@@ -9,6 +10,8 @@ import { Footer } from "@/components/app-shell/footer";
 import { MarketStatusBadge } from "@/components/app-shell/market-status-badge";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { TabBar } from "@/components/app-shell/tab-bar";
+import { BrandLogo } from "@/components/ui/brand-logo";
+import { APP_NAME } from "@/lib/brand";
 import { fadeQuick } from "@/lib/motion";
 
 /**
@@ -35,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-full focus:bg-accent focus:px-4 focus:py-2 focus:text-[13px] focus:font-semibold focus:text-accent-ink focus:shadow-raised"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-[10px] focus:bg-accent focus:px-4 focus:py-2 focus:text-[13px] focus:font-semibold focus:text-accent-ink focus:shadow-raised"
       >
         Skip to main content
       </a>
@@ -43,19 +46,23 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Sidebar onOpenCommandPalette={() => setIsPaletteOpen(true)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile Apple top bar (< 768px): Wordmark, Search, and full US + SGX Market Hours */}
-        <header className="material sticky top-0 z-30 space-y-2 border-b border-line px-4 py-2.5 md:hidden">
+        {/* Mobile top bar (< 768px): Wordmark, Search, and US + SGX Market Hours */}
+        <header className="sticky top-0 z-30 space-y-2 border-b border-line bg-surface px-4 py-2.5 md:hidden">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[17px] font-semibold tracking-tight text-ink">
-              Folio
-            </span>
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-ink"
+            >
+              <BrandLogo size={24} />
+              <span>{APP_NAME}</span>
+            </Link>
             <button
               type="button"
               onClick={() => setIsPaletteOpen(true)}
               aria-label="Search and jump to"
-              className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-full bg-surface-2 text-ink-2 transition-colors hover:text-ink"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:text-ink"
             >
-              <Search size={16} strokeWidth={1.9} aria-hidden="true" />
+              <Search size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           </div>
           <MarketStatusBadge layout="inline" />
@@ -64,7 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 outline-none sm:px-6 md:px-10 md:pb-12 md:pt-10"
+          className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 outline-none sm:px-6 md:px-8 md:pb-12 md:pt-8"
         >
           <motion.div
             key={pathname}

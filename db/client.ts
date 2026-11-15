@@ -24,8 +24,8 @@ export type Database = PgDatabase<any, typeof schema>;
 
 export type DatabaseKind = "postgres" | "pglite";
 
-const migrationsFolder = path.join(process.cwd(), "db", "migrations");
-const pgliteDataDirectory = path.join(process.cwd(), ".data", "pglite");
+export const migrationsFolder = path.join(process.cwd(), "db", "migrations");
+export const pgliteDataDirectory = path.join(process.cwd(), ".data", "pglite");
 
 /**
  * Keep one connection across hot reloads in development and across warm
@@ -44,7 +44,12 @@ async function createPostgresDatabase(connectionString: string): Promise<Databas
     connectionString,
     max: 3,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 15_000,
+  });
+  // Neon closes idle connections when scaling compute to zero; handle idle
+  // client errors so Node does not throw an unhandled EventEmitter error.
+  pool.on("error", (error) => {
+    console.error("Postgres pool idle client error:", error.message);
   });
   return drizzleNodePostgres(pool, { schema });
 }

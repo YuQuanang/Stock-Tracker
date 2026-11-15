@@ -302,7 +302,7 @@ function WatchlistManageForm({
       {error && (
         <div
           role="alert"
-          className="flex items-center gap-2 rounded-[12px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
+          className="flex items-center gap-2 rounded-[10px] bg-loss/10 px-3.5 py-2.5 text-[13px] text-loss"
         >
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{error}</span>

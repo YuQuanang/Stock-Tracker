@@ -12,34 +12,38 @@ export type ButtonSize = "md" | "sm" | "xs";
 export type ButtonShape = "rounded" | "pill";
 
 const BASE_CLASSES =
-  "inline-flex items-center justify-center whitespace-nowrap font-medium tracking-[-0.01em] transition-all duration-150 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45";
+  "inline-flex items-center justify-center whitespace-nowrap font-medium tracking-[-0.01em] transition-colors duration-150 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45";
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  md: "h-11 gap-2 px-4.5 text-[15px]",
-  sm: "h-9 gap-1.5 px-3.5 text-[13.5px]",
-  xs: "h-7 gap-1.5 px-2.5 text-[12px]",
+  md: "h-10 gap-2 px-4 text-[14px]",
+  sm: "h-9 gap-1.5 px-3 text-[13px]",
+  xs: "h-7.5 gap-1.5 px-2.5 text-[12px]",
 };
 
 const SHAPE_CLASSES: Record<ButtonShape, Record<ButtonSize, string>> = {
   rounded: {
-    md: "rounded-[11px]",
+    md: "rounded-[10px]",
     sm: "rounded-[10px]",
     xs: "rounded-[8px]",
   },
   pill: {
-    md: "rounded-full",
-    sm: "rounded-full",
-    xs: "rounded-full",
+    md: "rounded-[10px]",
+    sm: "rounded-[10px]",
+    xs: "rounded-[8px]",
   },
 };
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-accent-ink shadow-xs hover:brightness-105",
+  primary:
+    "bg-accent text-accent-ink font-semibold hover:brightness-110",
   secondary:
-    "border border-line bg-surface-2/80 text-ink hover:bg-surface-2",
-  tinted: "bg-accent/12 text-accent hover:bg-accent/18",
-  ghost: "bg-transparent text-ink-2 hover:bg-surface-2/80 hover:text-ink",
-  danger: "bg-loss text-white shadow-xs hover:brightness-105",
+    "border border-line bg-surface-2 text-ink hover:border-ink-3/60 hover:bg-[#222934]",
+  tinted:
+    "border border-accent/25 bg-accent/12 text-accent hover:bg-accent/18",
+  ghost:
+    "bg-transparent text-ink-2 hover:bg-surface-2 hover:text-ink",
+  danger:
+    "bg-loss text-white font-semibold hover:brightness-110",
 };
 
 export function getButtonClasses(

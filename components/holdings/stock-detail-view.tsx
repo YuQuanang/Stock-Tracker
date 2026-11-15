@@ -2,24 +2,29 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Pencil,
+  ArrowRightLeft,
   Plus,
   RefreshCw,
   SlidersHorizontal,
   Split,
-  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { InteractivePriceChart } from "@/components/charts/interactive-price-chart";
+import { InlineTransactionRow } from "@/components/holdings/inline-transaction-row";
+import {
+  TickerMigrationSheet,
+  type TickerMigrationTarget,
+} from "@/components/holdings/ticker-migration-sheet";
 import { TransactionSheet } from "@/components/transactions/transaction-sheet";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Sheet } from "@/components/ui/sheet";
+import { usePriceFlashRef } from "@/hooks/use-price-flash";
 import { useQuotesPoll } from "@/hooks/use-quotes-poll";
 import {
   HUNDRED,
@@ -40,10 +45,8 @@ import {
   type SerializedOpenLot,
 } from "@/lib/holdings/valuation";
 import type { StockDetailSnapshot } from "@/lib/services/holdings";
-import type {
-  EnrichedTransactionRow,
-  LedgerPositionSummary,
-} from "@/lib/services/ledger";
+import type { LedgerPositionSummary } from "@/lib/services/ledger";
+import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import {
   formatExchangeCodeForDisplay,
   formatSymbolForDisplay,
@@ -108,11 +111,21 @@ export function StockDetailView({
     return "transactions";
   });
 
-  // Transaction sheet state (create or edit)
+  // Create Transaction sheet state & inline transaction edit state
   const [isTxSheetOpen, setIsTxSheetOpen] = useState(false);
-  const [editingTx, setEditingTx] = useState<EnrichedTransactionRow | null>(
+  const [editingTxId, setEditingTxId] = useState<string | null>(null);
+  const [recentlySavedTxId, setRecentlySavedTxId] = useState<string | null>(
     null,
   );
+  const savedTxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (savedTxTimerRef.current) {
+        clearTimeout(savedTxTimerRef.current);
+      }
+    };
+  }, []);
 
   // Delete confirmation state
   const [confirmDeleteTxId, setConfirmDeleteTxId] = useState<string | null>(
@@ -131,6 +144,24 @@ export function StockDetailView({
   );
   const [isSavingOverride, setIsSavingOverride] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [migrationTarget, setMigrationTarget] =
+    useState<TickerMigrationTarget | null>(null);
+
+  const tickerTransition = useMemo(() => {
+    if (instrument.isDelisted) {
+      return null;
+    }
+    return getSgxTickerTransition(instrument.symbol);
+  }, [instrument.isDelisted, instrument.symbol]);
+
+  const hasPreTransitionOpenLot = useMemo(() => {
+    if (!tickerTransition) {
+      return false;
+    }
+    return buckets.some((b) =>
+      b.openLots.some((lot) => lot.localDate <= tickerTransition.effectiveDate),
+    );
+  }, [buckets, tickerTransition]);
 
   const initialQuotesMap = useMemo(
     () => (initialQuote ? { [instrument.symbol]: initialQuote } : {}),
@@ -181,6 +212,10 @@ export function StockDetailView({
     }
     return liveQuote?.price ?? null;
   }, [valuedRow, instrument.isDelisted, instrument.manualPrice, liveQuote?.price]);
+
+  const priceFlashRef = usePriceFlashRef<HTMLParagraphElement>(
+    effectiveUnitPrice !== null ? Number(effectiveUnitPrice) : null,
+  );
 
   const effectiveFreshnessLabel = useMemo(() => {
     if (valuedRow) {
@@ -266,6 +301,19 @@ export function StockDetailView({
     [transactions, selectedPortfolioId],
   );
 
+  const holdingsPortfolios = useMemo(
+    () => portfolios.filter((p) => p.type === "holdings"),
+    [portfolios],
+  );
+
+  const totalOpenSharesAllPortfolios = useMemo(() => {
+    let total = toDecimal(0);
+    for (const bucket of buckets) {
+      total = total.plus(toDecimal(bucket.sharesHeld));
+    }
+    return total.gt(0) ? toDecimalString(total, 12) : null;
+  }, [buckets]);
+
   const sheetPositions = useMemo<LedgerPositionSummary[]>(
     () =>
       buckets.map((b) => ({
@@ -330,13 +378,19 @@ export function StockDetailView({
     null;
 
   function openNewTradeSheet(): void {
-    setEditingTx(null);
     setIsTxSheetOpen(true);
   }
 
-  function openEditTradeSheet(tx: EnrichedTransactionRow): void {
-    setEditingTx(tx);
-    setIsTxSheetOpen(true);
+  function handleInlineTransactionSaved(txId: string): void {
+    setEditingTxId(null);
+    setRecentlySavedTxId(txId);
+    if (savedTxTimerRef.current) {
+      clearTimeout(savedTxTimerRef.current);
+    }
+    savedTxTimerRef.current = setTimeout(() => {
+      setRecentlySavedTxId((curr) => (curr === txId ? null : curr));
+    }, 2200);
+    router.refresh();
   }
 
   function openOverrideSheet(): void {
@@ -430,9 +484,9 @@ export function StockDetailView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Link
           href="/holdings"
-          className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1.5 -ml-2.5 text-[14px] font-medium text-accent transition-colors hover:bg-accent/8"
+          className="inline-flex w-fit items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 -ml-2.5 text-[14px] font-medium text-accent transition-colors hover:bg-accent/10"
         >
-          <ArrowLeft size={16} strokeWidth={2.1} aria-hidden="true" />
+          <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
           <span>Holdings</span>
         </Link>
 
@@ -442,7 +496,7 @@ export function StockDetailView({
             size="sm"
             onClick={openOverrideSheet}
           >
-            <SlidersHorizontal size={14} strokeWidth={2} aria-hidden="true" />
+            <SlidersHorizontal size={16} strokeWidth={1.9} aria-hidden="true" />
             <span>
               {hasActiveOverride ? "Override active" : "Price override"}
             </span>
@@ -470,8 +524,8 @@ export function StockDetailView({
             disabled={isRefreshing || isRetrying}
           >
             <RefreshCw
-              size={14}
-              strokeWidth={2}
+              size={16}
+              strokeWidth={1.9}
               aria-hidden="true"
               className={isRefreshing || isRetrying ? "animate-spin" : undefined}
             />
@@ -488,7 +542,7 @@ export function StockDetailView({
             size="sm"
             onClick={openNewTradeSheet}
           >
-            <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+            <Plus size={16} strokeWidth={2} aria-hidden="true" />
             <span>Record trade</span>
           </Button>
         </div>
@@ -499,26 +553,26 @@ export function StockDetailView({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-mono text-[28px] font-bold tracking-tight text-ink sm:text-[32px]">
+              <h1 className="font-mono text-[28px] font-semibold tracking-tight text-ink sm:text-[32px]">
                 {formatSymbolForDisplay(instrument.symbol)}
               </h1>
 
               {exchangeDisplay && (
-                <span className="rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11.5px] font-medium text-ink-2">
+                <span className="rounded-[6px] border border-line bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
                   {exchangeDisplay}
                 </span>
               )}
 
-              <span className="rounded-full border border-line bg-surface-2 px-2.5 py-0.5 text-[11.5px] font-medium text-ink-2">
+              <span className="rounded-[6px] border border-line bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
                 {instrument.currency}
               </span>
 
-              <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+              <span className="rounded-[6px] bg-surface-2 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-2">
                 {instrument.assetType}
               </span>
 
               {hasActiveOverride && (
-                <span className="rounded-full bg-accent/12 px-2.5 py-0.5 text-[11.5px] font-medium text-accent">
+                <span className="rounded-[6px] bg-accent/12 px-2 py-0.5 text-[11.5px] font-medium text-accent">
                   {instrument.isDelisted
                     ? "Delisted / Worthless override"
                     : "Manual price override"}
@@ -526,7 +580,7 @@ export function StockDetailView({
               )}
             </div>
 
-            <p className="mt-1 text-[15.5px] text-ink-2">
+            <p className="mt-1.5 text-[15px] text-ink-2">
               {instrument.name ?? fundamentals.name ?? "Unnamed instrument"}
             </p>
           </div>
@@ -534,7 +588,10 @@ export function StockDetailView({
           <div className="sm:text-right">
             {effectiveUnitPrice !== null ? (
               <>
-                <p className="num text-[28px] font-semibold tracking-tight text-ink sm:text-[32px]">
+                <p
+                  ref={priceFlashRef}
+                  className="num inline-block rounded-[8px] text-[30px] font-semibold tracking-tight text-ink sm:text-[32px]"
+                >
                   {formatMoney(effectiveUnitPrice, instrument.currency, {
                     maximumFractionDigits: 4,
                   })}
@@ -549,7 +606,7 @@ export function StockDetailView({
                       pill
                     />
                   )}
-                  <span className="text-[12px] text-ink-3">
+                  <span className="font-mono text-[12px] text-ink-3">
                     {effectiveFreshnessLabel}
                   </span>
                 </div>
@@ -561,29 +618,55 @@ export function StockDetailView({
                     ? "Price not found"
                     : "Price unavailable"}
                 </p>
-                <p className="mt-1 text-[12.5px] text-ink-3">
+                <p className="mt-1 text-[12.5px] text-ink-2">
                   {liveQuote?.unavailableReason ??
                     instrument.priceNotFoundReason ??
                     "No market quote available. Use Price override to value manually."}
                 </p>
+                {tickerTransition && (
+                  <div className="mt-2.5 flex sm:justify-end">
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onClick={() =>
+                        setMigrationTarget({
+                          instrumentId: instrument.id,
+                          transition: tickerTransition,
+                          defaultApplyConsolidation: hasPreTransitionOpenLot,
+                        })
+                      }
+                    >
+                      <ArrowRightLeft
+                        size={14}
+                        strokeWidth={1.9}
+                        aria-hidden="true"
+                      />
+                      <span>Update to {tickerTransition.newSymbol}</span>
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Portfolio Scope Pills (when held/traded in 1+ portfolios) */}
+        {/* Portfolio Scope Buttons (when held/traded in 1+ portfolios) */}
         {symbolPortfolios.length > 1 && (
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-            <span className="text-[12px] font-medium text-ink-3">
+            <span className="text-[12px] font-medium text-ink-2">
               Portfolio scope:
             </span>
             <button
               type="button"
-              onClick={() => setSelectedPortfolioId("all")}
-              className={`rounded-full px-3 py-1 text-[12.5px] font-medium transition-colors ${
+              onClick={() => {
+                setSelectedPortfolioId("all");
+                setEditingTxId(null);
+                setConfirmDeleteTxId(null);
+              }}
+              className={`rounded-[10px] px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
                 selectedPortfolioId === "all"
-                  ? "bg-accent text-white"
-                  : "bg-surface-2 text-ink-2 hover:text-ink"
+                  ? "bg-accent text-accent-ink"
+                  : "border border-line bg-surface-2 text-ink-2 hover:text-ink"
               }`}
             >
               All portfolios ({symbolPortfolios.length})
@@ -592,11 +675,15 @@ export function StockDetailView({
               <button
                 key={pf.id}
                 type="button"
-                onClick={() => setSelectedPortfolioId(pf.id)}
-                className={`rounded-full px-3 py-1 text-[12.5px] font-medium transition-colors ${
+                onClick={() => {
+                  setSelectedPortfolioId(pf.id);
+                  setEditingTxId(null);
+                  setConfirmDeleteTxId(null);
+                }}
+                className={`rounded-[10px] px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
                   selectedPortfolioId === pf.id
-                    ? "bg-accent text-white"
-                    : "bg-surface-2 text-ink-2 hover:text-ink"
+                    ? "bg-accent text-accent-ink"
+                    : "border border-line bg-surface-2 text-ink-2 hover:text-ink"
                 }`}
               >
                 {pf.name}
@@ -608,6 +695,7 @@ export function StockDetailView({
 
       {/* Interactive Price Chart with Range Selector, Avg Cost Line & Trade Markers */}
       <InteractivePriceChart
+        key={instrument.symbol}
         symbol={instrument.symbol}
         currency={instrument.currency}
         initialHistory={initialHistory}
@@ -616,15 +704,15 @@ export function StockDetailView({
       />
 
       {/* Position Summary + Company / ETF Key Statistics */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Card 1: Your Position Summary */}
         <Card className="p-5 sm:p-6">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-[18px] font-semibold tracking-tight text-ink">
               Position Summary
             </h2>
             {valuedRow?.weightPercent && valuedRow.isOpenPosition && (
-              <span className="num rounded-full bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium text-ink-2">
+              <span className="num rounded-[8px] border border-line bg-surface-2 px-2.5 py-0.5 text-[12px] font-medium text-ink-2">
                 {formatPercent(valuedRow.weightPercent, { fractionDigits: 1 })}{" "}
                 of portfolio
               </span>
@@ -632,26 +720,26 @@ export function StockDetailView({
           </div>
 
           {!valuedRow ? (
-            <div className="mt-6 rounded-[14px] border border-dashed border-line px-4 py-8 text-center">
+            <div className="mt-6 rounded-[12px] border border-dashed border-line px-4 py-8 text-center">
               <p className="text-[14px] font-medium text-ink-2">
                 No recorded position in this scope
               </p>
-              <p className="mt-1 text-[12.5px] text-ink-3">
+              <p className="mt-1 text-[13px] text-ink-2">
                 Record a Buy transaction to track FIFO lots, cost basis, and
                 realized/unrealized P&L.
               </p>
             </div>
           ) : (
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 text-[13.5px]">
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 text-[14px]">
               <div>
-                <dt className="text-[12px] text-ink-3">Shares held</dt>
+                <dt className="text-[12px] text-ink-2">Shares held</dt>
                 <dd className="num mt-0.5 text-[16px] font-semibold text-ink">
                   {formatQuantity(valuedRow.sharesHeld)}
                 </dd>
               </div>
 
               <div>
-                <dt className="text-[12px] text-ink-3">Avg cost / share</dt>
+                <dt className="text-[12px] text-ink-2">Avg cost / share</dt>
                 <dd className="num mt-0.5 text-[16px] font-semibold text-ink">
                   {formatMoney(
                     valuedRow.averageCostPerShare,
@@ -661,8 +749,8 @@ export function StockDetailView({
                 </dd>
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Market value</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Market value</dt>
                 <dd className="num mt-0.5 text-[15.5px] font-semibold text-ink">
                   {valuedRow.marketValue
                     ? formatMoney(valuedRow.marketValue, instrument.currency)
@@ -670,28 +758,28 @@ export function StockDetailView({
                 </dd>
                 {instrument.currency !== baseCurrency &&
                   valuedRow.marketValueInBase && (
-                    <p className="num mt-0.5 text-[12px] text-ink-3">
+                    <p className="num mt-0.5 text-[12px] text-ink-2">
                       {formatMoney(valuedRow.marketValueInBase, baseCurrency)}
                     </p>
                   )}
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Open cost basis</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Open cost basis</dt>
                 <dd className="num mt-0.5 text-[15.5px] font-semibold text-ink">
                   {formatMoney(valuedRow.costBasis, instrument.currency)}
                 </dd>
                 {instrument.currency !== baseCurrency &&
                   valuedRow.costBasisInBase && (
-                    <p className="num mt-0.5 text-[12px] text-ink-3">
+                    <p className="num mt-0.5 text-[12px] text-ink-2">
                       {formatMoney(valuedRow.costBasisInBase, baseCurrency)} at
                       purchase FX
                     </p>
                   )}
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Unrealized P&L</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Unrealized P&L</dt>
                 <dd className="mt-1">
                   <GainBadge
                     amount={valuedRow.unrealizedPnl}
@@ -702,7 +790,7 @@ export function StockDetailView({
                 </dd>
                 {instrument.currency !== baseCurrency &&
                   valuedRow.unrealizedPnlInBase && (
-                    <p className="num mt-0.5 text-[12px] text-ink-3">
+                    <p className="num mt-0.5 text-[12px] text-ink-2">
                       {formatMoney(
                         valuedRow.unrealizedPnlInBase,
                         baseCurrency,
@@ -712,8 +800,8 @@ export function StockDetailView({
                   )}
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Realized P&L</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Realized P&L</dt>
                 <dd className="mt-1">
                   <GainBadge
                     amount={valuedRow.realizedPnl}
@@ -721,15 +809,15 @@ export function StockDetailView({
                     size="sm"
                   />
                 </dd>
-                <p className="num mt-0.5 text-[12px] text-ink-3">
+                <p className="num mt-0.5 text-[12px] text-ink-2">
                   {valuedRow.closedTradeCount > 0
                     ? `Won ${valuedRow.winningTradeCount}/${valuedRow.closedTradeCount} closed trades`
                     : "No closed trades yet"}
                 </p>
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Dividends received</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Dividends received</dt>
                 <dd className="num mt-0.5 text-[15.5px] font-semibold text-ink">
                   {formatMoney(
                     valuedRow.dividendsReceived,
@@ -738,7 +826,7 @@ export function StockDetailView({
                 </dd>
                 {instrument.currency !== baseCurrency &&
                   valuedRow.dividendsReceivedInBase && (
-                    <p className="num mt-0.5 text-[12px] text-ink-3">
+                    <p className="num mt-0.5 text-[12px] text-ink-2">
                       {formatMoney(
                         valuedRow.dividendsReceivedInBase,
                         baseCurrency,
@@ -747,8 +835,8 @@ export function StockDetailView({
                   )}
               </div>
 
-              <div className="border-t border-line/70 pt-3.5">
-                <dt className="text-[12px] text-ink-3">Total lifetime return</dt>
+              <div className="border-t border-line pt-3.5">
+                <dt className="text-[12px] text-ink-2">Total lifetime return</dt>
                 <dd className="mt-1">
                   <GainBadge
                     amount={valuedRow.totalReturn}
@@ -759,7 +847,7 @@ export function StockDetailView({
                 </dd>
                 {instrument.currency !== baseCurrency &&
                   valuedRow.totalReturnInBase && (
-                    <p className="num mt-0.5 text-[12px] text-ink-3">
+                    <p className="num mt-0.5 text-[12px] text-ink-2">
                       {formatMoney(valuedRow.totalReturnInBase, baseCurrency, {
                         signed: true,
                       })}
@@ -773,19 +861,19 @@ export function StockDetailView({
         {/* Card 2: Key Statistics & 52-Week Range Bar */}
         <Card className="p-5 sm:p-6">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+            <h2 className="text-[18px] font-semibold tracking-tight text-ink">
               Key Statistics
             </h2>
             {fundamentals.source && (
-              <span className="text-[11.5px] text-ink-3">
+              <span className="font-mono text-[11.5px] text-ink-3">
                 24h cache · {fundamentals.source}
               </span>
             )}
           </div>
 
           {/* 52-Week Range Visual Indicator */}
-          <div className="mt-4 rounded-[13px] bg-surface-2/75 p-3.5">
-            <div className="flex items-center justify-between text-[12px] font-medium text-ink-3">
+          <div className="mt-4 rounded-[12px] border border-line bg-surface-2 p-3.5">
+            <div className="flex items-center justify-between text-[12px] font-medium text-ink-2">
               <span>52-Week Low</span>
               <span>52-Week Range</span>
               <span>52-Week High</span>
@@ -803,7 +891,7 @@ export function StockDetailView({
                   {rangePositionPct !== null && (
                     <span
                       aria-hidden="true"
-                      className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface bg-accent shadow-xs"
+                      className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface-2 bg-accent"
                       style={{ left: `${rangePositionPct}%` }}
                     />
                   )}
@@ -824,16 +912,16 @@ export function StockDetailView({
                 </div>
               </>
             ) : (
-              <p className="mt-2 text-[12.5px] text-ink-3">
+              <p className="mt-2 text-[12.5px] text-ink-2">
                 52-week range unavailable for this instrument.
               </p>
             )}
           </div>
 
           {/* Key-Value Fundamental Rows */}
-          <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3.5 text-[13.5px]">
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">Market Cap</dt>
+          <dl className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3.5 text-[14px]">
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">Market Cap</dt>
               <dd className="num font-medium text-ink">
                 {formatCompactMoney(
                   fundamentals.marketCap,
@@ -842,8 +930,8 @@ export function StockDetailView({
               </dd>
             </div>
 
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">P/E (TTM)</dt>
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">P/E (TTM)</dt>
               <dd className="num font-medium text-ink">
                 {fundamentals.peTrailing
                   ? Number(fundamentals.peTrailing).toFixed(2)
@@ -851,8 +939,8 @@ export function StockDetailView({
               </dd>
             </div>
 
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">Div Yield</dt>
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">Div Yield</dt>
               <dd className="num font-medium text-ink">
                 {fundamentals.dividendYieldPercent
                   ? formatPercent(fundamentals.dividendYieldPercent)
@@ -860,29 +948,29 @@ export function StockDetailView({
               </dd>
             </div>
 
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">Beta</dt>
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">Beta</dt>
               <dd className="num font-medium text-ink">
                 {fundamentals.beta ? Number(fundamentals.beta).toFixed(2) : "—"}
               </dd>
             </div>
 
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">30D Avg Vol</dt>
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">30D Avg Vol</dt>
               <dd className="num font-medium text-ink">
                 {formatCompactNumber(fundamentals.averageVolume)}
               </dd>
             </div>
 
-            <div className="flex items-baseline justify-between gap-2 border-b border-line/70 pb-2.5">
-              <dt className="text-ink-3">Exchange</dt>
+            <div className="flex items-baseline justify-between gap-2 border-b border-line pb-2.5">
+              <dt className="text-ink-2">Exchange</dt>
               <dd className="truncate font-medium text-ink">
                 {exchangeDisplay ?? "—"}
               </dd>
             </div>
 
             <div className="col-span-2 flex items-baseline justify-between gap-3 pt-0.5">
-              <dt className="shrink-0 text-ink-3">Sector / Industry</dt>
+              <dt className="shrink-0 text-ink-2">Sector / Industry</dt>
               <dd className="truncate text-right font-medium text-ink">
                 {fundamentals.industry ?? fundamentals.sector ?? "—"}
               </dd>
@@ -895,7 +983,7 @@ export function StockDetailView({
       {corporateActions.length > 0 && (
         <Card className="flex items-start gap-3 px-4 py-3.5 sm:px-5">
           <Split
-            size={17}
+            size={18}
             className="mt-0.5 shrink-0 text-accent"
             aria-hidden="true"
           />
@@ -907,7 +995,7 @@ export function StockDetailView({
               <span key={split.id} className="num">
                 {idx > 0 ? " · " : ""}
                 {split.ratioNumerator}:{split.ratioDenominator} on{" "}
-                {split.exDate}
+                <span className="font-mono">{split.exDate}</span>
               </span>
             ))}
           </div>
@@ -937,7 +1025,7 @@ export function StockDetailView({
         {ledgerTab === "lots" && (
           <Card className="overflow-hidden">
             {computedOpenLots.length === 0 ? (
-              <div className="px-4 py-10 text-center text-[14px] text-ink-3">
+              <div className="px-4 py-10 text-center text-[14px] text-ink-2">
                 No open FIFO lots for {instrument.symbol} in this scope.
               </div>
             ) : (
@@ -951,10 +1039,10 @@ export function StockDetailView({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <p className="num text-[14px] font-semibold text-ink">
+                          <p className="font-mono text-[13.5px] font-semibold text-ink">
                             {lot.localDate}
                           </p>
-                          <p className="text-[12px] text-ink-3">
+                          <p className="text-[12px] text-ink-2">
                             {lot.portfolioName}
                             {lot.isZeroCostBuy ? " · Zero-cost lot" : ""}
                           </p>
@@ -987,9 +1075,9 @@ export function StockDetailView({
 
                 {/* Desktop Open Lots Table */}
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full border-collapse text-left text-[13.5px]">
+                  <table className="w-full border-collapse text-left text-[14px]">
                     <thead>
-                      <tr className="border-b border-line text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                      <tr className="border-b border-line text-[12px] font-medium text-ink-2">
                         <th className="px-4 py-3">Purchase Date</th>
                         <th className="px-3 py-3">Portfolio</th>
                         <th className="px-3 py-3 text-right">
@@ -1005,12 +1093,12 @@ export function StockDetailView({
                       {computedOpenLots.map((lot) => (
                         <tr
                           key={`${lot.portfolioId}-${lot.buyTransactionId}`}
-                          className="hover:bg-surface-2/45"
+                          className="transition-colors hover:bg-surface-2"
                         >
-                          <td className="num whitespace-nowrap px-4 py-3.5 font-medium text-ink">
+                          <td className="font-mono whitespace-nowrap px-4 py-3.5 text-[13px] font-medium text-ink">
                             {lot.localDate}
                             {lot.isZeroCostBuy && (
-                              <span className="ml-2 rounded bg-accent/12 px-1.5 py-0.5 font-sans text-[10.5px] font-medium text-accent">
+                              <span className="ml-2 rounded-[6px] bg-accent/12 px-1.5 py-0.5 font-sans text-[11px] font-medium text-accent">
                                 Zero cost
                               </span>
                             )}
@@ -1022,7 +1110,7 @@ export function StockDetailView({
                             <span className="font-medium">
                               {formatQuantity(lot.remainingShares)}
                             </span>{" "}
-                            <span className="text-[12px] text-ink-3">
+                            <span className="text-[12px] text-ink-2">
                               / {formatQuantity(lot.initialShares)}
                             </span>
                           </td>
@@ -1042,7 +1130,7 @@ export function StockDetailView({
                             </div>
                             {instrument.currency !== baseCurrency &&
                               lot.remainingCostBasisInBase && (
-                                <div className="text-[11.5px] text-ink-3">
+                                <div className="text-[12px] text-ink-2">
                                   {formatMoney(
                                     lot.remainingCostBasisInBase,
                                     baseCurrency,
@@ -1080,7 +1168,7 @@ export function StockDetailView({
         {ledgerTab === "closed" && (
           <Card className="overflow-hidden">
             {filteredClosedMatches.length === 0 ? (
-              <div className="px-4 py-10 text-center text-[14px] text-ink-3">
+              <div className="px-4 py-10 text-center text-[14px] text-ink-2">
                 No closed FIFO trades for {instrument.symbol} in this scope.
               </div>
             ) : (
@@ -1094,12 +1182,14 @@ export function StockDetailView({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <p className="num text-[13.5px] font-semibold text-ink">
+                          <p className="font-mono text-[13px] font-semibold text-ink">
                             {match.buyDate} → {match.sellDate}
                           </p>
-                          <p className="text-[12px] text-ink-3">
+                          <p className="text-[12px] text-ink-2">
                             {match.portfolioName} ·{" "}
-                            {formatQuantity(match.sharesMatched)} sh
+                            <span className="num">
+                              {formatQuantity(match.sharesMatched)} sh
+                            </span>
                             {match.closedViaPortfolioName
                               ? ` · Closed by Sell All in ${match.closedViaPortfolioName}`
                               : ""}
@@ -1113,7 +1203,7 @@ export function StockDetailView({
                         />
                       </div>
 
-                      <div className="num flex items-center justify-between text-[12px] text-ink-3">
+                      <div className="num flex items-center justify-between text-[12px] text-ink-2">
                         <span>
                           Cost{" "}
                           {formatMoney(
@@ -1135,9 +1225,9 @@ export function StockDetailView({
 
                 {/* Desktop Closed Trades Table */}
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full border-collapse text-left text-[13.5px]">
+                  <table className="w-full border-collapse text-left text-[14px]">
                     <thead>
-                      <tr className="border-b border-line text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                      <tr className="border-b border-line text-[12px] font-medium text-ink-2">
                         <th className="px-4 py-3">Holding Period</th>
                         <th className="px-3 py-3">Portfolio</th>
                         <th className="px-3 py-3 text-right">Shares Matched</th>
@@ -1150,15 +1240,15 @@ export function StockDetailView({
                       {filteredClosedMatches.map((match, idx) => (
                         <tr
                           key={`${match.sellTransactionId}-${match.buyTransactionId}-${idx}`}
-                          className="hover:bg-surface-2/45"
+                          className="transition-colors hover:bg-surface-2"
                         >
-                          <td className="num whitespace-nowrap px-4 py-3.5 font-medium text-ink">
+                          <td className="font-mono whitespace-nowrap px-4 py-3.5 text-[13px] font-medium text-ink">
                             {match.buyDate} → {match.sellDate}
                           </td>
                           <td className="px-3 py-3.5 text-ink-2">
                             {match.portfolioName}
                             {match.closedViaPortfolioName && (
-                              <div className="text-[11.5px] text-ink-3">
+                              <div className="text-[12px] text-ink-3">
                                 Closed by Sell All in{" "}
                                 {match.closedViaPortfolioName}
                               </div>
@@ -1189,7 +1279,7 @@ export function StockDetailView({
                               />
                               {instrument.currency !== baseCurrency &&
                                 match.realizedPnlInBase && (
-                                  <div className="num mt-0.5 text-[11.5px] text-ink-3">
+                                  <div className="num mt-0.5 text-[12px] text-ink-2">
                                     {formatMoney(
                                       match.realizedPnlInBase,
                                       baseCurrency,
@@ -1213,110 +1303,36 @@ export function StockDetailView({
         {ledgerTab === "transactions" && (
           <Card className="overflow-hidden">
             {filteredTransactions.length === 0 ? (
-              <div className="px-4 py-10 text-center text-[14px] text-ink-3">
+              <div className="px-4 py-10 text-center text-[14px] text-ink-2">
                 No transactions recorded for {instrument.symbol} in this scope.
               </div>
             ) : (
               <div className="divide-y divide-line">
-                {filteredTransactions.map((tx) => {
-                  const isConfirming = confirmDeleteTxId === tx.id;
-                  const isDeleting = deletingTxId === tx.id;
-
-                  return (
-                    <div
-                      key={tx.id}
-                      className="flex flex-col gap-2.5 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${
-                              tx.type === "Buy"
-                                ? "bg-accent/12 text-accent"
-                                : tx.type === "Dividend"
-                                  ? "bg-gain/12 text-gain"
-                                  : "bg-loss/12 text-loss"
-                            }`}
-                          >
-                            {tx.type}
-                          </span>
-                          <span className="num text-[13.5px] font-medium text-ink">
-                            {tx.localDate}
-                          </span>
-                          <span className="text-[12.5px] text-ink-3">
-                            · {tx.portfolioName}
-                          </span>
-                        </div>
-
-                        <p className="num mt-1 text-[13px] text-ink-2">
-                          {tx.type === "Dividend"
-                            ? `Cash dividend ${formatMoney(tx.quantity, tx.currency)}`
-                            : tx.type === "Sell All"
-                              ? `All open shares @ ${formatMoney(tx.price, tx.currency, { maximumFractionDigits: 4 })}`
-                              : `${formatQuantity(tx.quantity)} sh @ ${formatMoney(tx.price, tx.currency, { maximumFractionDigits: 4 })}`}
-                          {tx.totalCostSgd
-                            ? ` · ${formatMoney(tx.totalCostSgd, "SGD")} total`
-                            : ""}
-                        </p>
-
-                        {tx.type === "Sell All" && (
-                          <p className="mt-0.5 text-[12px] text-ink-3">
-                            Closes {instrument.symbol} in every portfolio that
-                            holds it.
-                          </p>
-                        )}
-
-                        {tx.notes && (
-                          <p className="mt-0.5 text-[12px] text-ink-3">
-                            {tx.notes}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5 self-end sm:self-center">
-                        {isConfirming ? (
-                          <>
-                            <Button
-                              variant="danger"
-                              onClick={() => void handleDeleteTransaction(tx.id)}
-                              disabled={isDeleting}
-                              className="h-8 px-3 text-[12.5px]"
-                            >
-                              {isDeleting ? "Deleting…" : "Confirm delete"}
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              onClick={() => setConfirmDeleteTxId(null)}
-                              disabled={isDeleting}
-                              className="h-8 px-2.5 text-[12.5px]"
-                            >
-                              Cancel
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => openEditTradeSheet(tx)}
-                              aria-label={`Edit ${tx.type} transaction on ${tx.localDate}`}
-                              className="flex h-8 w-8 items-center justify-center rounded-full text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
-                            >
-                              <Pencil size={14} aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteTxId(tx.id)}
-                              aria-label={`Delete ${tx.type} transaction on ${tx.localDate}`}
-                              className="flex h-8 w-8 items-center justify-center rounded-full text-ink-3 transition-colors hover:bg-loss/12 hover:text-loss"
-                            >
-                              <Trash2 size={14} aria-hidden="true" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {filteredTransactions.map((tx) => (
+                  <InlineTransactionRow
+                    key={tx.id}
+                    tx={tx}
+                    instrumentSymbol={instrument.symbol}
+                    holdingsPortfolios={holdingsPortfolios}
+                    openSharesTotal={totalOpenSharesAllPortfolios}
+                    isEditing={editingTxId === tx.id}
+                    isConfirmingDelete={confirmDeleteTxId === tx.id}
+                    isDeleting={deletingTxId === tx.id}
+                    justSaved={recentlySavedTxId === tx.id}
+                    onStartEdit={() => {
+                      setConfirmDeleteTxId(null);
+                      setEditingTxId(tx.id);
+                    }}
+                    onCancelEdit={() => setEditingTxId(null)}
+                    onSaved={handleInlineTransactionSaved}
+                    onRequestDelete={() => {
+                      setEditingTxId(null);
+                      setConfirmDeleteTxId(tx.id);
+                    }}
+                    onCancelDelete={() => setConfirmDeleteTxId(null)}
+                    onConfirmDelete={() => void handleDeleteTransaction(tx.id)}
+                  />
+                ))}
               </div>
             )}
           </Card>
@@ -1331,7 +1347,7 @@ export function StockDetailView({
         description="Override live market quotes for unlisted, suspended, crypto, or delisted positions."
       >
         <form onSubmit={handleOverrideSubmit} className="space-y-4">
-          <label className="flex cursor-pointer items-start gap-3 rounded-[13px] border border-line bg-field-bg p-3.5">
+          <label className="flex cursor-pointer items-start gap-3 rounded-[12px] border border-line bg-field-bg p-3.5">
             <input
               type="checkbox"
               checked={isDelistedInput}
@@ -1368,7 +1384,7 @@ export function StockDetailView({
           </div>
 
           {overrideError && (
-            <p className="rounded-[11px] bg-loss/10 px-3 py-2 text-[13px] text-loss">
+            <p className="rounded-[10px] bg-loss/10 px-3 py-2 text-[13px] text-loss">
               {overrideError}
             </p>
           )}
@@ -1406,38 +1422,47 @@ export function StockDetailView({
         </form>
       </Sheet>
 
-      {/* Inline Create / Edit Transaction Sheet */}
+      {/* Record New Transaction Sheet */}
       <TransactionSheet
         key={
           isTxSheetOpen
-            ? `detail-tx-${editingTx?.id ?? "new"}`
+            ? `detail-tx-new-${instrument.symbol}`
             : "detail-tx-closed"
         }
         isOpen={isTxSheetOpen}
         onClose={() => {
           setIsTxSheetOpen(false);
-          setEditingTx(null);
         }}
         onSaved={() => router.refresh()}
         portfolios={portfolios}
         positions={sheetPositions}
-        editingTransaction={editingTx}
         defaultPortfolioId={
           selectedPortfolioId !== "all"
             ? selectedPortfolioId
             : symbolPortfolios[0]?.id
         }
-        defaultStock={
-          editingTx
-            ? null
-            : {
-                symbol: instrument.symbol,
-                name: instrument.name ?? fundamentals.name,
-                exchangeCode:
-                  instrument.exchangeCode ?? fundamentals.exchangeName,
-                currency: instrument.currency === "SGD" ? "SGD" : "USD",
-              }
+        defaultStock={{
+          symbol: instrument.symbol,
+          name: instrument.name ?? fundamentals.name,
+          exchangeCode:
+            instrument.exchangeCode ?? fundamentals.exchangeName,
+          currency: instrument.currency === "SGD" ? "SGD" : "USD",
+        }}
+      />
+
+      <TickerMigrationSheet
+        key={
+          migrationTarget
+            ? `detail-migrate-${migrationTarget.instrumentId}-${migrationTarget.transition.newSymbol}`
+            : "detail-migrate-closed"
         }
+        target={migrationTarget}
+        onClose={() => setMigrationTarget(null)}
+        onMigrated={(targetSymbol) => {
+          setMigrationTarget(null);
+          router.replace(`/holdings/${encodeURIComponent(targetSymbol)}`);
+          router.refresh();
+        }}
       />
     </div>
   );

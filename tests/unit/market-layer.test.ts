@@ -288,8 +288,38 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
 
   it("caches company fundamentals for 24 hours and skips crypto symbols", async () => {
     let calls = 0;
-    const mockFetch: typeof fetch = async () => {
+    const mockFetch: typeof fetch = async (input) => {
       calls += 1;
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("scanner.tradingview.com")) {
+        return new Response(
+          JSON.stringify({
+            totalCount: 1,
+            data: [
+              {
+                s: "SGX:ES3",
+                d: [
+                  "ES3",
+                  "State Street SPDR Straits Times Index ETF Units",
+                  "SGD",
+                  null,
+                  null,
+                  3.55,
+                  null,
+                  3.88,
+                  3.19,
+                  0.98,
+                  2041811,
+                  "Miscellaneous",
+                  "Investment Trusts/Mutual Funds",
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+
       return new Response(
         JSON.stringify({
           chart: {
@@ -330,21 +360,24 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
     expect(first.fiftyTwoWeekHigh).toBe("3.88");
     expect(first.fiftyTwoWeekLow).toBe("3.19");
     expect(first.averageVolume).toBe("1500000");
-    expect(calls).toBe(1);
+    expect(first.dividendYieldPercent).toBe("3.55");
+    expect(first.beta).toBe("0.98");
+    expect(first.sector).toBe("Miscellaneous");
+    expect(calls).toBe(2);
 
     // Cached for 24h -> 0 extra network calls
     const second = await fetchInstrumentFundamentals("ES3.SI", {
       fetchImpl: mockFetch,
     });
     expect(second.fiftyTwoWeekHigh).toBe("3.88");
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
 
     // Crypto immediately returns unavailable with 0 network calls
     const crypto = await fetchInstrumentFundamentals("ETH-SGD", {
       fetchImpl: mockFetch,
     });
     expect(crypto.status).toBe("unavailable");
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   });
 
   it("resolves batch quotes with exact dayChange math, manual/delisted overrides, crypto exclusion, and labelled offline fallback", async () => {

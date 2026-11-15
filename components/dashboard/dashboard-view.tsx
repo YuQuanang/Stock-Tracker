@@ -18,12 +18,14 @@ import {
 import { MetricTooltip } from "@/components/analytics/metric-tooltip";
 import { AllocationDonut } from "@/components/charts/allocation-donut";
 import { PortfolioValueChart } from "@/components/charts/portfolio-value-chart";
+import { Sparkline } from "@/components/charts/sparkline";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
+import { usePriceFlashRef } from "@/hooks/use-price-flash";
 import { useQuotesPoll } from "@/hooks/use-quotes-poll";
 import {
   CORE_COMPARISON_BENCHMARKS,
@@ -49,6 +51,30 @@ const CURRENCY_OPTIONS: readonly SegmentedOption<"SGD" | "USD">[] = [
   { value: "USD", label: "USD" },
 ];
 
+function buildDashboardHeadline(
+  summary: PortfolioAnalyticsSnapshot["summary"],
+  performance: PortfolioAnalyticsSnapshot["performance"],
+  currency: "SGD" | "USD",
+): string {
+  const dayPct =
+    summary.totalDayChangePercent !== null
+      ? Number(summary.totalDayChangePercent)
+      : Number.NaN;
+  if (Number.isFinite(dayPct) && Math.abs(dayPct) >= 0.01) {
+    const dir = dayPct > 0 ? "up" : "down";
+    return `Your portfolio is ${dir} ${Math.abs(dayPct).toFixed(2)}% today`;
+  }
+  const cumTwr =
+    performance.cumulativeTwrPercent !== null
+      ? Number(performance.cumulativeTwrPercent)
+      : Number.NaN;
+  if (Number.isFinite(cumTwr) && Math.abs(cumTwr) >= 0.01) {
+    const dir = cumTwr > 0 ? "up" : "down";
+    return `Your portfolio is ${dir} ${Math.abs(cumTwr).toFixed(1)}% overall`;
+  }
+  return `Portfolio overview in ${currency}`;
+}
+
 function MoverItemRow({
   row,
   mode,
@@ -66,11 +92,13 @@ function MoverItemRow({
   return (
     <Link
       href={`/holdings/${encodeURIComponent(row.symbol)}`}
-      className="flex items-center justify-between gap-3 rounded-[8px] px-1.5 py-2 -mx-1.5 text-[13px] transition-colors hover:bg-surface-2/50"
+      className="-mx-1.5 flex items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-[14px] transition-colors hover:bg-surface-2"
     >
       <div className="min-w-0">
-        <p className="truncate font-semibold text-ink">{row.displaySymbol}</p>
-        <p className="truncate text-[11.5px] text-ink-3">
+        <p className="font-mono truncate text-[13.5px] font-semibold text-ink">
+          {row.displaySymbol}
+        </p>
+        <p className="truncate text-[12px] text-ink-2">
           {row.name ?? row.symbol}
         </p>
       </div>
@@ -106,14 +134,14 @@ function MoverListSection({
 
   return (
     <div>
-      <p className="text-[11.5px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+      <p className="text-[12px] font-medium uppercase tracking-[0.04em] text-ink-3">
         {title}
       </p>
       {rows.length === 0 ? (
-        <p className="mt-2 text-[13px] text-ink-3">{emptyLabel}</p>
+        <p className="mt-2 text-[13px] text-ink-2">{emptyLabel}</p>
       ) : (
         <div className="mt-2">
-          <ul className="divide-y divide-line/60">
+          <ul className="divide-y divide-line">
             {previewRows.map((row) => (
               <li key={row.symbol}>
                 <MoverItemRow row={row} mode={mode} currency={currency} />
@@ -135,7 +163,7 @@ function MoverListSection({
                   height: 0,
                   transition: { ...fadeQuick, opacity: { duration: 0.1 } },
                 }}
-                className="divide-y divide-line/60 overflow-hidden border-t border-line/60"
+                className="divide-y divide-line overflow-hidden border-t border-line"
               >
                 {extraRows.map((row) => (
                   <li key={row.symbol}>
@@ -207,20 +235,21 @@ function MoverSummaryCard({
       />
 
       {hiddenCount > 0 && (
-        <div className="border-t border-line/60 pt-2.5">
+        <div className="border-t border-line pt-2.5">
           <button
             type="button"
             onClick={() => setIsExpanded((prev) => !prev)}
             aria-expanded={isExpanded}
-            className="flex w-full items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-[12.5px] font-medium text-accent transition-colors hover:bg-surface-2/60 focus-visible:outline-2 focus-visible:outline-accent"
+            className="flex w-full items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-[13px] font-medium text-accent transition-colors hover:bg-surface-2"
           >
             <span>
               {isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}
             </span>
             <ChevronDown
-              size={14}
+              size={16}
+              strokeWidth={1.75}
               aria-hidden="true"
-              className={`transition-transform duration-200 ${
+              className={`transition-transform duration-150 ${
                 isExpanded ? "rotate-180" : ""
               }`}
             />
@@ -400,8 +429,8 @@ export function DashboardView({
       });
       if (next.forceRefresh) {
         qs.set("forceRefresh", "true");
-      } else {
-        // Scope & currency toggles reuse warm server/DB caches in milliseconds.
+      } else if (next.portfolioId === snapshot.scope.portfolioFilterId) {
+        // Currency toggles on the current portfolio reuse warm server/DB caches in milliseconds.
         qs.set("cacheOnly", "true");
       }
       const res = await fetch(`/api/analytics?${qs.toString()}`, {
@@ -441,21 +470,25 @@ export function DashboardView({
     }
   }
 
+  const totalValueFlashRef = usePriceFlashRef<HTMLParagraphElement>(
+    Number(snapshot.summary.totalMarketValueInBase),
+  );
+
   if (snapshot.accountHasNoTransactions) {
     return (
       <div className="space-y-6">
         <EmptyState
           icon={FileUp}
-          title="Welcome to Folio"
+          title="Welcome to Kestrel"
           description="Bring in your existing portfolio from a Microsoft Start / MSN Money CSV export, or add transactions manually to unlock live FIFO lots, historical valuation charts, XIRR/TWR analytics, and global benchmark comparisons."
           actions={
             <>
               <ButtonLink href="/import-export">
-                <FileUp size={18} strokeWidth={1.75} aria-hidden="true" />
+                <FileUp size={16} strokeWidth={1.75} aria-hidden="true" />
                 Import my CSV
               </ButtonLink>
               <ButtonLink href="/transactions" variant="secondary">
-                <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
+                <Plus size={16} strokeWidth={1.75} aria-hidden="true" />
                 Add first transaction
               </ButtonLink>
             </>
@@ -464,7 +497,7 @@ export function DashboardView({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card className="p-5">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               1. Exact Ledger Math
             </p>
             <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
@@ -473,7 +506,7 @@ export function DashboardView({
             </p>
           </Card>
           <Card className="p-5">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               2. Honest Pricing
             </p>
             <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
@@ -482,7 +515,7 @@ export function DashboardView({
             </p>
           </Card>
           <Card className="p-5">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               3. Benchmark Ready
             </p>
             <p className="mt-1.5 text-[14px] leading-[1.5] text-ink-2">
@@ -503,6 +536,10 @@ export function DashboardView({
   const totalRealizedAndDividends =
     Number(summary.totalRealizedPnlInBase) +
     Number(summary.totalDividendsInBase);
+  const heroHeadline = buildDashboardHeadline(summary, performance, currency);
+  const recentSparkValues = snapshot.timeline.points
+    .slice(-30)
+    .map((point) => point.portfolioValue);
 
   const cryptoNotFoundCount = unpricedOpenHoldings.filter(
     (item) => item.assetType === "crypto",
@@ -515,127 +552,178 @@ export function DashboardView({
 
   return (
     <div className="space-y-6">
-      {/* Scope & Currency Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <label className="sr-only" htmlFor="dashboard-portfolio-filter">
-            Portfolio scope
-          </label>
-          <div className="relative inline-flex items-center">
-            <select
-              id="dashboard-portfolio-filter"
-              value={selectedPortfolioId}
-              onChange={(e) =>
-                void loadAnalyticsScope({
-                  portfolioId: e.target.value,
-                  currency: selectedCurrency,
-                })
-              }
-              className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px] font-medium shadow-xs"
-            >
-              <option value="all">
-                All Portfolios ({snapshot.portfolios.length})
-              </option>
-              {snapshot.portfolios.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={14}
-              className="pointer-events-none absolute right-2.5 text-ink-3"
-              aria-hidden="true"
-            />
+      {/* Top Hero Band: grainy blue-grey gradient permitted on dashboard hero ONLY */}
+      <section
+        aria-label="Portfolio summary hero"
+        className="hero-band-grain rounded-[var(--radius-card)] border border-line p-5 sm:p-6"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-balance text-[18px] font-semibold leading-snug tracking-[-0.015em] text-ink sm:text-[20px]">
+              {heroHeadline}
+            </h1>
+            <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] text-ink-2">
+              <span>{livePoll.market.badgeLabel}</span>
+              {currentFxRate && (
+                <>
+                  <span className="text-ink-3" aria-hidden="true">·</span>
+                  <span className="num">
+                    1 USD = {Number(currentFxRate).toFixed(4)} SGD
+                  </span>
+                </>
+              )}
+              {snapshot.timeline.firstTransactionDate && (
+                <>
+                  <span className="text-ink-3" aria-hidden="true">·</span>
+                  <span>
+                    Since{" "}
+                    <span className="font-mono">
+                      {snapshot.timeline.firstTransactionDate}
+                    </span>
+                  </span>
+                </>
+              )}
+            </p>
           </div>
 
-          <SegmentedControl
-            ariaLabel="Dashboard comparison currency"
-            options={CURRENCY_OPTIONS}
-            value={selectedCurrency}
-            layoutId="dashboard-currency-seg"
-            onChange={(nextCurrency) => {
-              if (nextCurrency !== selectedCurrency) {
+          {/* Scope & Currency Controls */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="dashboard-portfolio-filter">
+              Portfolio scope
+            </label>
+            <div className="relative inline-flex items-center">
+              <select
+                id="dashboard-portfolio-filter"
+                value={selectedPortfolioId}
+                onChange={(e) =>
+                  void loadAnalyticsScope({
+                    portfolioId: e.target.value,
+                    currency: selectedCurrency,
+                  })
+                }
+                className="field-input h-9 appearance-none bg-surface pr-8 text-[13px] font-medium"
+              >
+                <option value="all">
+                  All Portfolios ({snapshot.portfolios.length})
+                </option>
+                {snapshot.portfolios.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={16}
+                strokeWidth={1.75}
+                className="pointer-events-none absolute right-2.5 text-ink-2"
+                aria-hidden="true"
+              />
+            </div>
+
+            <SegmentedControl
+              ariaLabel="Dashboard comparison currency"
+              options={CURRENCY_OPTIONS}
+              value={selectedCurrency}
+              layoutId="dashboard-currency-seg"
+              size="sm"
+              onChange={(nextCurrency) => {
+                if (nextCurrency !== selectedCurrency) {
+                  void loadAnalyticsScope({
+                    portfolioId: selectedPortfolioId,
+                    currency: nextCurrency,
+                  });
+                }
+              }}
+            />
+
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={isLoadingScope}
+              onClick={() =>
                 void loadAnalyticsScope({
                   portfolioId: selectedPortfolioId,
-                  currency: nextCurrency,
-                });
+                  currency: selectedCurrency,
+                  forceRefresh: true,
+                })
               }
-            }}
-          />
+            >
+              <RefreshCw
+                size={16}
+                strokeWidth={1.75}
+                className={isLoadingScope ? "animate-spin" : undefined}
+                aria-hidden="true"
+              />
+              {isLoadingScope ? "Updating…" : "Refresh"}
+            </Button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 text-[12px] text-ink-3">
-          {currentFxRate && (
-            <span className="num rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2">
-              1 USD = {Number(currentFxRate).toFixed(4)} SGD
-            </span>
+        {/* Hero Value + Day Change + Compact Flat Sparkline */}
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-5">
+          <div className="min-w-0 space-y-1">
+            <p className="text-[12px] font-medium text-ink-2">
+              Total Portfolio Value ({currency})
+            </p>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <p
+                ref={totalValueFlashRef}
+                className="num inline-block rounded-[8px] px-1 -mx-1 text-[32px] font-semibold leading-none tracking-[-0.025em] text-ink"
+              >
+                {formatMoney(summary.totalMarketValueInBase, currency, {
+                  locale,
+                })}
+              </p>
+              <div className="flex items-center gap-1.5 text-[14px]">
+                <span className="text-[12px] text-ink-2">Today:</span>
+                <GainBadge
+                  amount={summary.totalDayChangeInBase}
+                  currency={currency}
+                  percent={summary.totalDayChangePercent}
+                  size="sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          {recentSparkValues.length >= 2 && (
+            <div className="flex items-center gap-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5">
+              <div>
+                <p className="text-[11px] text-ink-3">30D trend</p>
+                <p className="num text-[12px] font-medium text-ink-2">
+                  {summary.openCount} open
+                </p>
+              </div>
+              <Sparkline
+                values={recentSparkValues}
+                width={104}
+                height={32}
+                tone="accent"
+              />
+            </div>
           )}
-          <span
-            className="rounded-full border border-line bg-surface px-2.5 py-1 text-ink-2"
-            title={livePoll.market.detailLabel}
-          >
-            {livePoll.market.badgeLabel}
-          </span>
-          <Button
-            variant="secondary"
-            size="xs"
-            shape="pill"
-            disabled={isLoadingScope}
-            onClick={() =>
-              void loadAnalyticsScope({
-                portfolioId: selectedPortfolioId,
-                currency: selectedCurrency,
-                forceRefresh: true,
-              })
-            }
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${isLoadingScope ? "animate-spin" : ""}`}
-              aria-hidden="true"
-            />
-            {isLoadingScope ? "Updating…" : "Refresh"}
-          </Button>
         </div>
-      </div>
+      </section>
 
       {scopeError && (
         <div
           role="alert"
-          className="rounded-[12px] border border-loss/30 bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
+          className="rounded-[12px] border border-loss/35 bg-loss/10 px-4 py-2.5 text-[13px] text-loss"
         >
           {scopeError}
         </div>
       )}
 
       <div
-        className={`space-y-6 transition-opacity duration-200 ${
+        className={`space-y-6 transition-opacity duration-150 ${
           isLoadingScope ? "opacity-65" : "opacity-100"
         }`}
       >
-        {/* Row 1: 4 Key Metric Cards */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="p-4 sm:p-5">
-            <p className="text-[12.5px] font-medium text-ink-3">
-              Portfolio Value ({currency})
-            </p>
-            <p className="num mt-1.5 text-[28px] font-semibold tracking-[-0.025em] text-ink">
-              {formatMoney(summary.totalMarketValueInBase, currency, { locale })}
-            </p>
-            <div className="mt-2 flex items-center gap-1.5 text-[12.5px]">
-              <span className="text-ink-3">Today:</span>
-              <GainBadge
-                amount={summary.totalDayChangeInBase}
-                currency={currency}
-                percent={summary.totalDayChangePercent}
-                size="sm"
-              />
-            </div>
-          </Card>
-
+        {/* Row 1: Secondary Performance Metric Cards (flat #161B22 surfaces) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card className="p-4 sm:p-5">
             <div className="flex items-center gap-1.5">
-              <p className="text-[12.5px] font-medium text-ink-3">
+              <p className="text-[12px] font-medium text-ink-2">
                 Unrealized P&amp;L
               </p>
               <MetricTooltip
@@ -651,9 +739,9 @@ export function DashboardView({
                 size="md"
               />
             </div>
-            <p className="num mt-2 text-[12.5px] text-ink-3">
+            <p className="num mt-2 text-[12px] text-ink-2">
               Open cost basis{" "}
-              <span className="font-medium text-ink-2">
+              <span className="font-medium text-ink">
                 {formatMoney(summary.totalCostBasisInBase, currency, { locale })}
               </span>
             </p>
@@ -661,7 +749,7 @@ export function DashboardView({
 
           <Card className="p-4 sm:p-5">
             <div className="flex items-center gap-1.5">
-              <p className="text-[12.5px] font-medium text-ink-3">
+              <p className="text-[12px] font-medium text-ink-2">
                 Realized &amp; Dividends
               </p>
               <MetricTooltip
@@ -676,9 +764,11 @@ export function DashboardView({
                 size="md"
               />
             </div>
-            <p className="num mt-2 text-[12.5px] text-ink-3">
+            <p className="num mt-2 text-[12px] text-ink-2">
               Realized{" "}
-              {formatMoney(summary.totalRealizedPnlInBase, currency, { locale })}
+              <span className="font-medium text-ink">
+                {formatMoney(summary.totalRealizedPnlInBase, currency, { locale })}
+              </span>
               {performance.winRatePercent
                 ? ` · ${performance.winRatePercent}% win rate`
                 : ""}
@@ -687,7 +777,7 @@ export function DashboardView({
 
           <Card className="p-4 sm:p-5">
             <div className="flex items-center gap-1.5">
-              <p className="text-[12.5px] font-medium text-ink-3">
+              <p className="text-[12px] font-medium text-ink-2">
                 Returns (TWR &amp; XIRR)
               </p>
               <MetricTooltip
@@ -695,35 +785,35 @@ export function DashboardView({
                 explanation="Annualized & Cumulative TWR measure pure portfolio strategy skill independent of cash-flow timing. Annualized XIRR measures your personal money-weighted return including deposits & withdrawals."
               />
             </div>
-            <dl className="mt-2.5 divide-y divide-line/60">
+            <dl className="mt-2 divide-y divide-line">
               <div className="flex items-center justify-between gap-2 pb-1.5">
-                <dt className="text-[12px] font-medium text-ink-3">
+                <dt className="text-[12px] font-medium text-ink-2">
                   Annualized TWR
                 </dt>
-                <dd>
+                <dd className="text-right">
                   <GainBadge
                     percent={performance.annualizedTwrPercent}
-                    size="lg"
+                    size="md"
                   />
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-2 py-1.5">
-                <dt className="text-[12px] font-medium text-ink-3">
+                <dt className="text-[12px] font-medium text-ink-2">
                   Cumulative TWR
                 </dt>
-                <dd>
+                <dd className="text-right">
                   <GainBadge
                     percent={performance.cumulativeTwrPercent}
-                    size="lg"
+                    size="md"
                   />
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-2 pt-1.5">
-                <dt className="text-[12px] font-medium text-ink-3">
+                <dt className="text-[12px] font-medium text-ink-2">
                   Annualized XIRR
                 </dt>
-                <dd>
-                  <GainBadge percent={performance.xirrPercent} size="lg" />
+                <dd className="text-right">
+                  <GainBadge percent={performance.xirrPercent} size="md" />
                 </dd>
               </div>
             </dl>
@@ -736,14 +826,17 @@ export function DashboardView({
             isAllocationExpanded ? "lg:items-start" : "lg:items-stretch"
           } lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]`}
         >
-          <Card className="flex h-full flex-col p-4 sm:p-6">
+          <Card className="flex h-full flex-col p-4 sm:p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+              <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
                 Portfolio Value Over Time
               </h2>
               {snapshot.timeline.firstTransactionDate && (
-                <span className="num text-[12px] text-ink-3">
-                  Since {snapshot.timeline.firstTransactionDate}
+                <span className="text-[12px] text-ink-3">
+                  Since{" "}
+                  <span className="font-mono text-ink-2">
+                    {snapshot.timeline.firstTransactionDate}
+                  </span>
                 </span>
               )}
             </div>
@@ -754,12 +847,12 @@ export function DashboardView({
             />
           </Card>
 
-          <Card className="flex h-full flex-col p-4 sm:p-6">
+          <Card className="flex h-full flex-col p-4 sm:p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+              <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
                 Asset Allocation
               </h2>
-              <span className="text-[12px] text-ink-3">
+              <span className="num text-[12px] text-ink-2">
                 {summary.openCount} open position
                 {summary.openCount === 1 ? "" : "s"}
               </span>
@@ -775,47 +868,47 @@ export function DashboardView({
           </Card>
         </div>
 
-        {/* Row 3: Benchmark Comparison (moved up right below Portfolio Value Over Time) */}
-        <Card className="flex flex-col justify-between gap-4 p-5 sm:p-6">
+        {/* Row 3: Benchmark Comparison */}
+        <Card className="flex flex-col justify-between gap-4 p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-accent/12 text-accent">
-                <ChartLine className="h-5 w-5" aria-hidden="true" />
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-line bg-surface-2 text-accent">
+                <ChartLine size={20} strokeWidth={1.75} aria-hidden="true" />
               </span>
               <div className="min-w-0">
-                <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-ink">
+                <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
                   Benchmark Comparison
                 </h2>
-                <p className="mt-0.5 text-[13px] text-ink-2">
+                <p className="mt-0.5 text-[14px] text-ink-2">
                   Annualized &amp; Cumulative TWR compared against S&amp;P 500,
                   STI &amp; NASDAQ in {currency}.
                 </p>
               </div>
             </div>
-            <span className="rounded-full border border-line bg-surface-2/70 px-2.5 py-0.5 text-[11.5px] font-medium text-ink-2">
+            <span className="rounded-[8px] border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2">
               TWR · {currency}
             </span>
           </div>
 
           {/* Mobile stacked Benchmark Comparison cards */}
-          <div className="divide-y divide-line/60 overflow-hidden rounded-[12px] border border-line bg-surface-2/35 sm:hidden">
-            <div className="bg-accent/6 p-3.5">
+          <div className="divide-y divide-line overflow-hidden rounded-[12px] border border-line bg-surface-2 sm:hidden">
+            <div className="p-3.5">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-[13.5px] font-semibold text-ink">
+                  <p className="text-[14px] font-semibold text-ink">
                     Your Portfolio
                   </p>
-                  <p className="text-[11px] text-ink-3">
+                  <p className="text-[12px] text-ink-2">
                     Time-weighted return
                   </p>
                 </div>
-                <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
+                <span className="text-[12px] font-medium text-accent">
                   Baseline
                 </span>
               </div>
               <div className="mt-2.5 grid grid-cols-2 gap-2 text-[12px]">
                 <div>
-                  <p className="text-[10.5px] text-ink-3">Annualized TWR</p>
+                  <p className="text-[12px] text-ink-2">Annualized TWR</p>
                   <div className="num mt-0.5">
                     <GainBadge
                       percent={performance.annualizedTwrPercent}
@@ -824,7 +917,7 @@ export function DashboardView({
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[10.5px] text-ink-3">Cumulative TWR</p>
+                  <p className="text-[12px] text-ink-2">Cumulative TWR</p>
                   <div className="num mt-0.5">
                     <GainBadge
                       percent={performance.cumulativeTwrPercent}
@@ -854,10 +947,10 @@ export function DashboardView({
                       href="/benchmarks"
                       className="group flex min-w-0 items-baseline gap-1.5"
                     >
-                      <span className="truncate text-[13.5px] font-medium text-ink transition-colors group-hover:text-accent">
+                      <span className="truncate text-[14px] font-medium text-ink transition-colors group-hover:text-accent">
                         {preset.label}
                       </span>
-                      <span className="shrink-0 text-[11px] text-ink-3">
+                      <span className="font-mono shrink-0 text-[12px] text-ink-2">
                         {formatSymbolForDisplay(preset.symbol)}
                       </span>
                     </Link>
@@ -865,19 +958,19 @@ export function DashboardView({
                       {annSpread !== null ? (
                         <GainBadge percent={annSpread} size="sm" pill />
                       ) : (
-                        <span className="text-[12px] text-ink-3">—</span>
+                        <span className="text-[12px] text-ink-2">—</span>
                       )}
                     </div>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
                     <div>
-                      <p className="text-[10.5px] text-ink-3">Annualized</p>
+                      <p className="text-[12px] text-ink-2">Annualized</p>
                       <div className="num mt-0.5">
                         <GainBadge percent={annRet} size="sm" />
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10.5px] text-ink-3">Cumulative</p>
+                      <p className="text-[12px] text-ink-2">Cumulative</p>
                       <div className="num mt-0.5">
                         <GainBadge percent={cumRet} size="sm" />
                       </div>
@@ -888,21 +981,21 @@ export function DashboardView({
             })}
           </div>
 
-          <div className="hidden overflow-x-auto rounded-[12px] border border-line bg-surface-2/35 sm:block">
-            <table className="w-full min-w-[460px] border-collapse text-left text-[13px]">
+          <div className="hidden overflow-x-auto rounded-[12px] border border-line bg-surface-2 sm:block">
+            <table className="w-full min-w-[460px] border-collapse text-left text-[14px]">
               <thead>
-                <tr className="border-b border-line/80 text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
-                  <th className="py-2.5 pl-3.5 pr-3">Benchmark</th>
+                <tr className="border-b border-line text-[12px] font-medium uppercase tracking-[0.04em] text-ink-2">
+                  <th className="py-2.5 pl-4 pr-3">Benchmark</th>
                   <th className="px-3 py-2.5 text-right">Annualized TWR</th>
                   <th className="px-3 py-2.5 text-right">Cumulative TWR</th>
-                  <th className="py-2.5 pl-3 pr-3.5 text-right">Ann. Spread</th>
+                  <th className="py-2.5 pl-3 pr-4 text-right">Ann. Spread</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line/60">
+              <tbody className="divide-y divide-line">
                 <tr className="bg-accent/6">
-                  <td className="py-2.5 pl-3.5 pr-3">
+                  <td className="py-2.5 pl-4 pr-3">
                     <p className="font-semibold text-ink">Your Portfolio</p>
-                    <p className="text-[11px] text-ink-3">
+                    <p className="text-[12px] text-ink-2">
                       Time-weighted return
                     </p>
                   </td>
@@ -918,10 +1011,8 @@ export function DashboardView({
                       size="sm"
                     />
                   </td>
-                  <td className="py-2.5 pl-3 pr-3.5 text-right">
-                    <span className="inline-flex rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent">
-                      Baseline
-                    </span>
+                  <td className="py-2.5 pl-3 pr-4 text-right text-[12px] font-medium text-accent">
+                    Baseline
                   </td>
                 </tr>
 
@@ -940,17 +1031,17 @@ export function DashboardView({
                   return (
                     <tr
                       key={preset.symbol}
-                      className="transition-colors hover:bg-surface-2/70"
+                      className="transition-colors hover:bg-surface"
                     >
-                      <td className="py-2.5 pl-3.5 pr-3">
+                      <td className="py-2.5 pl-4 pr-3">
                         <Link
                           href="/benchmarks"
-                          className="group flex items-baseline gap-1.5"
+                          className="group flex items-baseline gap-2"
                         >
                           <span className="font-medium text-ink transition-colors group-hover:text-accent">
                             {preset.label}
                           </span>
-                          <span className="text-[11px] text-ink-3">
+                          <span className="font-mono text-[12px] text-ink-2">
                             {formatSymbolForDisplay(preset.symbol)}
                           </span>
                         </Link>
@@ -961,11 +1052,11 @@ export function DashboardView({
                       <td className="num px-3 py-2.5 text-right">
                         <GainBadge percent={cumRet} size="sm" />
                       </td>
-                      <td className="num py-2.5 pl-3 pr-3.5 text-right">
+                      <td className="num py-2.5 pl-3 pr-4 text-right">
                         {annSpread !== null ? (
                           <GainBadge percent={annSpread} size="sm" pill />
                         ) : (
-                          <span className="text-[12px] text-ink-3">—</span>
+                          <span className="text-[12px] text-ink-2">—</span>
                         )}
                       </td>
                     </tr>
@@ -975,38 +1066,45 @@ export function DashboardView({
             </table>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line/70 pt-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3.5">
             <p className="text-[12px] text-ink-3">
-              {snapshot.timeline.firstTransactionDate
-                ? `Aligned from ${snapshot.timeline.firstTransactionDate} · `
-                : ""}
+              {snapshot.timeline.firstTransactionDate ? (
+                <>
+                  Aligned from{" "}
+                  <span className="font-mono">
+                    {snapshot.timeline.firstTransactionDate}
+                  </span>
+                  {" · "}
+                </>
+              ) : (
+                ""
+              )}
               Curves, cash-flow simulation &amp; CAPM risk
             </p>
             <ButtonLink
               href="/benchmarks"
               variant="primary"
               size="sm"
-              shape="pill"
-              className="w-full font-semibold sm:w-auto"
+              className="w-full sm:w-auto"
             >
-              <ChartLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <ChartLine size={16} strokeWidth={1.75} aria-hidden="true" />
               <span>View Benchmark Detail</span>
-              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
             </ButtonLink>
           </div>
         </Card>
 
-        {/* Row 4: Compact Expandable Movers Today & All-Time Open Performers */}
+        {/* Row 4: Movers Today & All-Time Open Performers */}
         <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
           <MoverSummaryCard
             title="Today's Movers"
             headerRight={
               <Link
                 href="/holdings"
-                className="inline-flex items-center gap-1 text-[12.5px] font-medium text-accent hover:underline"
+                className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline"
               >
                 Holdings
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
               </Link>
             }
             primaryTitle="Top Gainers"
@@ -1043,22 +1141,17 @@ export function DashboardView({
               : "lg:items-start"
           }`}
         >
-          <Card className="flex h-full flex-col justify-between gap-3.5 p-4 sm:p-5">
+          <Card className="flex h-full flex-col justify-between gap-4 p-4 sm:p-5">
             <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-3">
-                  Additional Info
-                </p>
-                <h2 className="mt-0.5 text-[15px] font-semibold tracking-[-0.01em] text-ink">
-                  Dividends &amp; Risk
-                </h2>
-              </div>
-              <Coins className="h-4 w-4 text-ink-3" aria-hidden="true" />
+              <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
+                Dividends &amp; Risk
+              </h2>
+              <Coins size={20} strokeWidth={1.75} className="text-ink-2" aria-hidden="true" />
             </div>
 
-            <dl className="grid grid-cols-2 gap-2.5 rounded-[12px] border border-line bg-surface-2/45 p-3">
+            <dl className="grid grid-cols-2 gap-3 rounded-[12px] border border-line bg-surface-2 p-3.5">
               <div>
-                <dt className="text-[11px] text-ink-3">Lifetime Dividends</dt>
+                <dt className="text-[12px] text-ink-2">Lifetime Dividends</dt>
                 <dd className="num mt-0.5 text-[14px] font-semibold text-ink">
                   {formatMoney(dividends.totalDividendsInBase, currency, {
                     locale,
@@ -1066,17 +1159,17 @@ export function DashboardView({
                 </dd>
               </div>
               <div>
-                <dt className="text-[11px] text-ink-3">Trailing 12M</dt>
+                <dt className="text-[12px] text-ink-2">Trailing 12M</dt>
                 <dd className="num mt-0.5 text-[14px] font-semibold text-ink">
                   {formatMoney(dividends.trailing12MonthsInBase, currency, {
                     locale,
                   })}
                 </dd>
               </div>
-              <div className="col-span-2 border-t border-line/70 pt-2">
+              <div className="col-span-2 border-t border-line pt-2.5">
                 <div className="flex items-baseline justify-between gap-2">
-                  <dt className="text-[11px] text-ink-3">Est. Annual Yield</dt>
-                  <dd className="num text-[13.5px] font-semibold text-ink">
+                  <dt className="text-[12px] text-ink-2">Est. Annual Yield</dt>
+                  <dd className="num text-[14px] font-semibold text-ink">
                     {dividends.projectedAnnualIncomeInBase !== null
                       ? formatMoney(
                           dividends.projectedAnnualIncomeInBase,
@@ -1086,200 +1179,206 @@ export function DashboardView({
                       : "Unavailable"}
                   </dd>
                 </div>
-                <p className="mt-0.5 text-[10.5px] text-ink-3">
+                <p className="mt-0.5 text-[12px] text-ink-3">
                   {dividends.holdingsWithYieldCount}/
                   {dividends.openHoldingsCount} open holdings reporting yield
                 </p>
               </div>
             </dl>
 
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
-                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">
-                  Max Drawdown
-                </p>
-                <p className="num mt-0.5 text-[12.5px] font-semibold text-loss sm:text-[13px]">
+            <div className="grid grid-cols-3 gap-2.5 text-center">
+              <div className="min-w-0 rounded-[12px] border border-line bg-surface-2 px-2 py-2">
+                <p className="text-[12px] text-ink-2">Max Drawdown</p>
+                <p className="num mt-0.5 text-[13px] font-semibold text-loss">
                   {performance.drawdown.maxDrawdownPercent
                     ? formatPercent(performance.drawdown.maxDrawdownPercent)
                     : "—"}
                 </p>
               </div>
-              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
-                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">
-                  Volatility
-                </p>
-                <p className="num mt-0.5 text-[12.5px] font-semibold text-ink sm:text-[13px]">
+              <div className="min-w-0 rounded-[12px] border border-line bg-surface-2 px-2 py-2">
+                <p className="text-[12px] text-ink-2">Volatility</p>
+                <p className="num mt-0.5 text-[13px] font-semibold text-ink">
                   {performance.volatilityPercent
                     ? `${performance.volatilityPercent}%`
                     : "—"}
                 </p>
               </div>
-              <div className="min-w-0 rounded-[10px] border border-line px-1.5 py-1.5 sm:px-2">
-                <p className="text-[10px] text-ink-3 sm:text-[10.5px]">Sharpe</p>
-                <p className="num mt-0.5 text-[12.5px] font-semibold text-ink sm:text-[13px]">
+              <div className="min-w-0 rounded-[12px] border border-line bg-surface-2 px-2 py-2">
+                <p className="text-[12px] text-ink-2">Sharpe</p>
+                <p className="num mt-0.5 text-[13px] font-semibold text-ink">
                   {performance.sharpeRatio ?? "—"}
                 </p>
               </div>
             </div>
           </Card>
 
-          <div className="flex h-full flex-col gap-3.5">
+          <div className="flex h-full flex-col gap-4">
             <Card className="p-4 sm:p-5">
-            <button
-              type="button"
-              onClick={() => setIsQualityExpanded((prev) => !prev)}
-              aria-expanded={isQualityExpanded}
-              className="flex w-full items-start justify-between gap-3 rounded-[10px] text-left focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">
-                    Data Quality &amp; Assumptions
-                  </h2>
-                  {dataQuality.length === 0 ? (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-gain/25 bg-gain/10 px-2 py-0.5 text-[11px] font-medium text-gain">
-                      <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                      All clear
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-ink-2">
-                      {dataQuality.some((d) => d.severity === "warning") ? (
-                        <AlertTriangle
-                          className="h-3 w-3 text-amber-500"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Info
-                          className="h-3 w-3 text-accent"
-                          aria-hidden="true"
-                        />
-                      )}
-                      {dataQuality.length} note
-                      {dataQuality.length === 1 ? "" : "s"}
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 text-[12px] text-ink-3">
-                  FIFO · Dividends as{" "}
-                  {snapshot.scope.dividendMode === "shares"
-                    ? "Reinvested Shares"
-                    : "Cash Payouts"}
-                  {!isQualityExpanded && dataQuality.length > 0
-                    ? " · Tap to review pricing & FX coverage notes"
-                    : ""}
-                </p>
-              </div>
-
-              <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2/80 text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
-                <ChevronDown
-                  size={15}
-                  aria-hidden="true"
-                  className={`transition-transform duration-200 ${
-                    isQualityExpanded ? "rotate-180" : ""
-                  }`}
-                />
-              </span>
-            </button>
-
-            <AnimatePresence initial={false}>
-              {isQualityExpanded && (
-                <motion.div
-                  key="data-quality-panel"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{
-                    opacity: 1,
-                    height: "auto",
-                    transition: { ...springSmooth, opacity: fadeQuick },
-                  }}
-                  exit={{
-                    opacity: 0,
-                    height: 0,
-                    transition: { ...fadeQuick, opacity: { duration: 0.1 } },
-                  }}
-                  className="overflow-hidden"
-                >
-                  <div className="mt-3.5 border-t border-line/70 pt-3.5">
-                    <p className="text-[12.5px] text-ink-3">
-                      Transparent notes on excluded unpriced symbols, historical
-                      FX coverage, and cost-basis edge cases.
-                    </p>
-
+              <button
+                type="button"
+                onClick={() => setIsQualityExpanded((prev) => !prev)}
+                aria-expanded={isQualityExpanded}
+                className="flex w-full items-start justify-between gap-3 rounded-[10px] text-left"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-[18px] font-semibold tracking-[-0.015em] text-ink">
+                      Data Quality &amp; Assumptions
+                    </h2>
                     {dataQuality.length === 0 ? (
-                      <div className="mt-3 flex items-center gap-2.5 rounded-[12px] border border-gain/25 bg-gain/8 px-3.5 py-2.5 text-[13px] text-gain">
-                        <CheckCircle2
-                          className="h-4 w-4 shrink-0"
-                          aria-hidden="true"
-                        />
-                        <span>
-                          All open positions have live/cached prices and
-                          complete FX history.
-                        </span>
-                      </div>
+                      <span className="inline-flex items-center gap-1 rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-ink-2">
+                        <CheckCircle2 size={14} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+                        Complete
+                      </span>
                     ) : (
-                      <ul className="mt-3 divide-y divide-line">
-                        {dataQuality.map((item, idx) => (
-                          <li
-                            key={`${item.kind}-${item.symbol ?? idx}`}
-                            className="flex flex-wrap items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
-                          >
-                            <div className="flex min-w-0 items-start gap-2.5">
-                              {item.severity === "warning" ? (
-                                <AlertTriangle
-                                  className="mt-0.5 h-4 w-4 shrink-0 text-amber-500"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Info
-                                  className="mt-0.5 h-4 w-4 shrink-0 text-accent"
-                                  aria-hidden="true"
-                                />
-                              )}
-                              <div className="min-w-0">
-                                <p className="text-[13px] font-medium text-ink">
-                                  {item.title}
-                                </p>
-                                <p className="text-[12px] text-ink-2">
-                                  {item.description}
-                                </p>
-                              </div>
-                            </div>
-                            {item.actionHref && item.actionLabel && (
-                              <Link
-                                href={item.actionHref}
-                                className="shrink-0 rounded-full border border-line bg-surface-2 px-3 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-surface"
-                              >
-                                {item.actionLabel}
-                              </Link>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                      <span className="inline-flex items-center gap-1 rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-ink-2">
+                        {dataQuality.some((d) => d.severity === "warning") ? (
+                          <AlertTriangle
+                            size={14}
+                            strokeWidth={1.75}
+                            className="text-ink-2"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Info
+                            size={14}
+                            strokeWidth={1.75}
+                            className="text-accent"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {dataQuality.length} note
+                        {dataQuality.length === 1 ? "" : "s"}
+                      </span>
                     )}
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Card>
+                  <p className="mt-1 text-[12px] text-ink-3">
+                    FIFO · Dividends as{" "}
+                    {snapshot.scope.dividendMode === "shares"
+                      ? "Reinvested Shares"
+                      : "Cash Payouts"}
+                    {!isQualityExpanded && dataQuality.length > 0
+                      ? " · Tap to review pricing & FX coverage notes"
+                      : ""}
+                  </p>
+                </div>
+
+                <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-surface-2 text-ink-2 transition-colors hover:text-ink">
+                  <ChevronDown
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className={`transition-transform duration-150 ${
+                      isQualityExpanded ? "rotate-180" : ""
+                    }`}
+                  />
+                </span>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {isQualityExpanded && (
+                  <motion.div
+                    key="data-quality-panel"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{
+                      opacity: 1,
+                      height: "auto",
+                      transition: { ...springSmooth, opacity: fadeQuick },
+                    }}
+                    exit={{
+                      opacity: 0,
+                      height: 0,
+                      transition: { ...fadeQuick, opacity: { duration: 0.1 } },
+                    }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-3.5 border-t border-line pt-3.5">
+                      <p className="text-[12px] text-ink-2">
+                        Transparent notes on excluded unpriced symbols, historical
+                        FX coverage, and cost-basis edge cases.
+                      </p>
+
+                      {dataQuality.length === 0 ? (
+                        <div className="mt-3 flex items-center gap-2.5 rounded-[12px] border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
+                          <CheckCircle2
+                            size={16}
+                            strokeWidth={1.75}
+                            className="shrink-0 text-accent"
+                            aria-hidden="true"
+                          />
+                          <span>
+                            All open positions have live/cached prices and
+                            complete FX history.
+                          </span>
+                        </div>
+                      ) : (
+                        <ul className="mt-3 divide-y divide-line">
+                          {dataQuality.map((item, idx) => (
+                            <li
+                              key={`${item.kind}-${item.symbol ?? idx}`}
+                              className="flex flex-wrap items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
+                            >
+                              <div className="flex min-w-0 items-start gap-2.5">
+                                {item.severity === "warning" ? (
+                                  <AlertTriangle
+                                    size={16}
+                                    strokeWidth={1.75}
+                                    className="mt-0.5 shrink-0 text-ink-2"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Info
+                                    size={16}
+                                    strokeWidth={1.75}
+                                    className="mt-0.5 shrink-0 text-accent"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-[13px] font-medium text-ink">
+                                    {item.title}
+                                  </p>
+                                  <p className="text-[12px] text-ink-2">
+                                    {item.description}
+                                  </p>
+                                </div>
+                              </div>
+                              {item.actionHref && item.actionLabel && (
+                                <Link
+                                  href={item.actionHref}
+                                  className="shrink-0 rounded-[8px] border border-line bg-surface-2 px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:border-accent/40"
+                                >
+                                  {item.actionLabel}
+                                </Link>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </Card>
 
             {unpricedOpenHoldings.length > 0 && (
-              <Card className="flex flex-1 flex-col justify-between gap-2.5 p-4 sm:p-5">
+              <Card className="flex flex-1 flex-col justify-between gap-3 p-4 sm:p-5">
                 <div className="flex items-center justify-between gap-2.5">
                   <div className="flex min-w-0 items-center gap-2">
-                    <h2 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink">
+                    <h2 className="truncate text-[18px] font-semibold tracking-[-0.015em] text-ink">
                       Prices Not Found
                     </h2>
-                    <span className="num inline-flex shrink-0 items-center rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-ink-2">
+                    <span className="num inline-flex shrink-0 items-center rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] font-semibold text-ink-2">
                       {unpricedOpenHoldings.length}
                     </span>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1.5">
+                  <div className="flex shrink-0 items-center gap-2">
                     {retryableNotFoundSymbols.length > 0 && (
                       <Button
                         type="button"
                         variant="secondary"
                         size="xs"
-                        shape="pill"
                         disabled={livePoll.isRetrying}
                         onClick={() => {
                           void livePoll
@@ -1301,7 +1400,8 @@ export function DashboardView({
                         }}
                       >
                         <RefreshCw
-                          size={11.5}
+                          size={14}
+                          strokeWidth={1.75}
                           className={
                             livePoll.isRetrying ? "animate-spin" : undefined
                           }
@@ -1314,12 +1414,11 @@ export function DashboardView({
                     )}
                     <ButtonLink
                       href="/holdings#not-found"
-                      variant="tinted"
+                      variant="ghost"
                       size="xs"
-                      shape="pill"
                     >
                       <span>Manage</span>
-                      <ArrowRight size={11.5} aria-hidden="true" />
+                      <ArrowRight size={14} strokeWidth={1.75} aria-hidden="true" />
                     </ButtonLink>
                   </div>
                 </div>
@@ -1336,16 +1435,16 @@ export function DashboardView({
                             ? `${formatSymbolForDisplay(item.symbol)} · Crypto pricing disabled — tap to set manual price`
                             : `${formatSymbolForDisplay(item.symbol)} · Not found on providers — tap to retry or set manual price`
                         }
-                        className="inline-flex h-6.5 items-center gap-1.5 rounded-full border border-line bg-surface-2/65 px-2.5 text-[11.5px] transition-colors hover:border-accent/40 hover:bg-surface-2"
+                        className="inline-flex h-7 items-center gap-1.5 rounded-[8px] border border-line bg-surface-2 px-2.5 text-[12px] transition-colors hover:border-accent/50"
                       >
                         <span
                           aria-hidden="true"
                           className={`h-1.5 w-1.5 rounded-full ${
-                            isCrypto ? "bg-ink-3/60" : "bg-amber-500"
+                            isCrypto ? "bg-ink-3" : "bg-accent"
                           }`}
                         />
                         <span
-                          className={`font-mono font-semibold ${
+                          className={`font-mono font-medium ${
                             isCrypto ? "text-ink-2" : "text-ink"
                           }`}
                         >
@@ -1357,20 +1456,20 @@ export function DashboardView({
                   {extraUnpricedCount > 0 && (
                     <Link
                       href="/holdings#not-found"
-                      className="num inline-flex h-6.5 items-center rounded-full border border-line bg-surface-2/40 px-2.5 text-[11.5px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+                      className="num inline-flex h-7 items-center rounded-[8px] border border-line bg-surface-2 px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:text-ink"
                     >
                       +{extraUnpricedCount} more
                     </Link>
                   )}
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11.5px] text-ink-3">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[12px] text-ink-3">
                   <div className="flex flex-wrap items-center gap-3">
                     {providerNotFoundCount > 0 && (
                       <span className="inline-flex items-center gap-1.5">
                         <span
                           aria-hidden="true"
-                          className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                          className="h-1.5 w-1.5 rounded-full bg-accent"
                         />
                         <span>Not found ({providerNotFoundCount})</span>
                       </span>
@@ -1379,7 +1478,7 @@ export function DashboardView({
                       <span className="inline-flex items-center gap-1.5">
                         <span
                           aria-hidden="true"
-                          className="h-1.5 w-1.5 rounded-full bg-ink-3/60"
+                          className="h-1.5 w-1.5 rounded-full bg-ink-3"
                         />
                         <span>Crypto ({cryptoNotFoundCount})</span>
                       </span>

@@ -36,6 +36,7 @@ const BENCH_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
   "6M",
   "YTD",
   "1Y",
+  "3Y",
   "5Y",
   "MAX",
 ];
@@ -189,14 +190,14 @@ export function BenchmarkComparisonChart({
       height: 310,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: palette.ink3,
-        fontFamily:
-          'ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+        textColor: palette.ink2,
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: palette.line },
+        horzLines: { color: palette.grid },
       },
       rightPriceScale: {
         borderVisible: false,
@@ -212,13 +213,13 @@ export function BenchmarkComparisonChart({
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
         horzLine: {
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
       },
       handleScroll: false,
@@ -371,6 +372,11 @@ export function BenchmarkComparisonChart({
     (mode === "rebased" && rebasedLines.length === 0) ||
     (mode === "same-cash-flows" && !cashFlowSimulation);
 
+  const firstDate =
+    mode === "rebased"
+      ? (rebasedLines[0]?.data[0]?.date ?? null)
+      : (cashFlowSimulation?.series[0]?.date ?? null);
+
   const latestDate =
     mode === "rebased"
       ? (rebasedLines[0]?.data[rebasedLines[0].data.length - 1]?.date ?? null)
@@ -382,10 +388,31 @@ export function BenchmarkComparisonChart({
       {/* Toolbar & Legend separated cleanly so scrubbing never shifts controls or chart height */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
-          <p className="num text-[12px] text-ink-3 whitespace-nowrap">
-            {hovered
-              ? `As of ${hovered.date}`
-              : `${range} period${latestDate ? ` · latest ${latestDate}` : ""}`}
+          <p className="text-[12px] text-ink-2 whitespace-nowrap">
+            {hovered ? (
+              <>
+                As of <span className="font-mono">{hovered.date}</span>
+              </>
+            ) : (
+              <>
+                {range} period
+                {firstDate && latestDate ? (
+                  <>
+                    {" · "}
+                    <span className="font-mono">
+                      {firstDate} → {latestDate}
+                    </span>
+                  </>
+                ) : latestDate ? (
+                  <>
+                    {" · latest "}
+                    <span className="font-mono">{latestDate}</span>
+                  </>
+                ) : (
+                  ""
+                )}
+              </>
+            )}
           </p>
 
           <SegmentedControl
@@ -477,7 +504,7 @@ export function BenchmarkComparisonChart({
       </div>
 
       {noData ? (
-        <div className="flex h-64 items-center justify-center rounded-[14px] border border-dashed border-line bg-surface-2/40 text-center text-[13px] text-ink-3">
+        <div className="flex h-64 items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
           Select at least one benchmark or record portfolio transactions to
           compare historical performance.
         </div>
@@ -490,9 +517,9 @@ export function BenchmarkComparisonChart({
       )}
 
       {mode === "same-cash-flows" && cashFlowSimulation && (
-        <div className="grid grid-cols-1 gap-3 rounded-[14px] border border-line bg-surface-2/50 p-3.5 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 rounded-[12px] border border-line bg-surface-2 p-4 sm:grid-cols-3">
           <div>
-            <p className="text-[11.5px] font-medium text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               Your total profit
             </p>
             <div className="mt-1">
@@ -506,8 +533,8 @@ export function BenchmarkComparisonChart({
           </div>
 
           <div>
-            <p className="text-[11.5px] font-medium text-ink-3">
-              If invested in {primaryBenchmark?.displaySymbol}
+            <p className="text-[12px] font-medium text-ink-2">
+              If invested in <span className="font-mono">{primaryBenchmark?.displaySymbol}</span>
             </p>
             <div className="mt-1">
               <GainBadge
@@ -520,7 +547,7 @@ export function BenchmarkComparisonChart({
           </div>
 
           <div>
-            <p className="text-[11.5px] font-medium text-ink-3">
+            <p className="text-[12px] font-medium text-ink-2">
               Relative advantage ({currency})
             </p>
             <div className="mt-1 flex items-center gap-2">

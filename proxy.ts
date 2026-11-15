@@ -56,7 +56,7 @@ export function proxy(request: NextRequest) {
     // Most likely a missing or invalid environment variable. Fail closed with
     // a clear message. Variable names are safe to show; values never are.
     const message = error instanceof Error ? error.message : "Server misconfigured.";
-    return new NextResponse(`Folio is not configured.\n\n${message}\n`, {
+    return new NextResponse(`Kestrel is not configured.\n\n${message}\n`, {
       status: 503,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
@@ -88,7 +88,7 @@ export function proxy(request: NextRequest) {
 export const config = {
   // Everything except Next.js internals, public static files, and PWA endpoints.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|apple-icon|icon/|icons/|robots.txt).*)",
+    "/((?!_next/static|_next/image|favicon\\.ico|manifest\\.webmanifest|sw\\.js|apple-icon|icon(?:\\.svg|/|$)|icons/|robots\\.txt).*)",
   ],
 };
 

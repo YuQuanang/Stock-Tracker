@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AreaSeries,
   ColorType,
   createChart,
   CrosshairMode,
@@ -16,7 +15,6 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   ANALYTICS_RANGE_OPTIONS,
   type AnalyticsChartRange,
-  colorWithAlpha,
   filterPointsByAnalyticsRange,
   useChartThemePalette,
 } from "@/lib/charts/theme";
@@ -77,6 +75,7 @@ export function PortfolioValueChart({
     const unrealizedPct = costBasis > 0 ? (unrealized / costBasis) * 100 : null;
 
     return {
+      firstDate: first.date,
       latestDate: last.date,
       endVal,
       costBasis,
@@ -112,26 +111,19 @@ export function PortfolioValueChart({
       ]),
     );
 
-    const firstVal = mvPoints[0]?.value ?? 0;
-    const lastVal = mvPoints[mvPoints.length - 1]?.value ?? 0;
-    const isUp = lastVal >= firstVal;
-    const strokeColor = isUp ? palette.gain : palette.loss;
-    const topFill = colorWithAlpha(strokeColor, 0.22);
-    const bottomFill = colorWithAlpha(strokeColor, 0.01);
-
     const chart: IChartApi = createChart(el, {
       width: el.clientWidth,
       height: 290,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: palette.ink3,
-        fontFamily:
-          'ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
+        textColor: palette.ink2,
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: palette.line },
+        horzLines: { color: palette.grid },
       },
       rightPriceScale: {
         borderVisible: false,
@@ -147,32 +139,30 @@ export function PortfolioValueChart({
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
         horzLine: {
           color: palette.ink3,
           width: 1,
           style: LineStyle.Dashed,
-          labelBackgroundColor: palette.ink2,
+          labelBackgroundColor: palette.surface2,
         },
       },
       handleScroll: false,
       handleScale: false,
     });
 
-    const areaSeries: ISeriesApi<"Area"> = chart.addSeries(AreaSeries, {
-      lineColor: strokeColor,
-      topColor: topFill,
-      bottomColor: bottomFill,
+    const lineSeries: ISeriesApi<"Line"> = chart.addSeries(LineSeries, {
+      color: palette.accent,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
     });
-    areaSeries.setData(mvPoints);
+    lineSeries.setData(mvPoints);
 
     if (showCostBasis) {
       const costSeries: ISeriesApi<"Line"> = chart.addSeries(LineSeries, {
-        color: palette.accent,
+        color: palette.ink3,
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
@@ -212,7 +202,7 @@ export function PortfolioValueChart({
 
   if (points.length === 0 || !summaryStats) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-[14px] border border-dashed border-line bg-surface-2/40 text-center text-[13px] text-ink-3">
+      <div className="flex h-64 items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
         Historical valuation curve will appear once priced portfolio holdings
         have transaction history.
       </div>
@@ -235,7 +225,7 @@ export function PortfolioValueChart({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-h-[54px] space-y-0.5">
           <div className="flex flex-wrap items-baseline gap-2.5">
-            <span className="num text-[24px] font-semibold tracking-[-0.025em] text-ink">
+            <span className="num text-[24px] font-semibold tracking-[-0.02em] text-ink">
               {formatMoney(displayedVal, currency)}
             </span>
             <GainBadge
@@ -246,11 +236,22 @@ export function PortfolioValueChart({
               pill
             />
           </div>
-          <p className="num text-[12px] text-ink-3">
-            {hoverPoint ? `As of ${hoverPoint.date}` : `${range} period · latest ${summaryStats.latestDate}`}
+          <p className="text-[12px] text-ink-2">
+            {hoverPoint ? (
+              <>
+                As of <span className="font-mono">{hoverPoint.date}</span>
+              </>
+            ) : (
+              <>
+                {range} period ·{" "}
+                <span className="font-mono">
+                  {summaryStats.firstDate} → {summaryStats.latestDate}
+                </span>
+              </>
+            )}
             {" · "}
             Open cost basis{" "}
-            <span className="font-medium text-ink-2">
+            <span className="num font-medium text-ink">
               {formatMoney(displayedCost, currency)}
             </span>
           </p>
@@ -260,13 +261,13 @@ export function PortfolioValueChart({
           <button
             type="button"
             onClick={() => setShowCostBasis((prev) => !prev)}
-            className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11.5px] font-medium transition-colors ${
+            className={`inline-flex h-7 items-center gap-1.5 rounded-[10px] border px-2.5 text-[12px] font-medium transition-colors ${
               showCostBasis
-                ? "border-accent/40 bg-accent/10 text-accent"
+                ? "border-accent/40 bg-accent/12 text-accent"
                 : "border-line bg-surface-2 text-ink-2 hover:text-ink"
             }`}
           >
-            <span className="h-1.5 w-3 rounded-full border-t-2 border-dashed border-current" />
+            <span className="h-0.5 w-3 border-t-2 border-dashed border-current" />
             Cost basis
           </button>
 
@@ -291,9 +292,12 @@ export function PortfolioValueChart({
       />
 
       {excludedUnpricedSymbols.length > 0 && (
-        <p className="text-[11.5px] text-ink-3">
+        <p className="text-[12px] text-ink-3">
           Excludes unpriced assets without manual prices:{" "}
-          {excludedUnpricedSymbols.join(", ")}.
+          <span className="font-mono text-ink-2">
+            {excludedUnpricedSymbols.join(", ")}
+          </span>
+          .
         </p>
       )}
     </div>

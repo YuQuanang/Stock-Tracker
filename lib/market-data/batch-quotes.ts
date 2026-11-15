@@ -29,6 +29,10 @@ import {
   getCachedStockPrice,
   type PriceMarketStatus,
 } from "@/lib/market-data/quotes";
+import {
+  formatTransitionReason,
+  getSgxTickerTransition,
+} from "@/lib/market-data/sgx-transitions";
 import { inferInstrumentMetadata } from "@/lib/symbols";
 
 export type ResolvedQuoteStatus =
@@ -310,6 +314,10 @@ export async function resolveQuotesForSymbols(
       const hasPersistedNotFound =
         dbInstr?.priceNotFoundAt !== null && dbInstr?.priceNotFoundAt !== undefined;
       if (hasPersistedNotFound && !options.skipCache && !options.retryNotFound) {
+        const transition = getSgxTickerTransition(symbol);
+        const persistedReason = transition
+          ? formatTransitionReason(transition)
+          : dbInstr?.priceNotFoundReason;
         const latestCached = recentDesc[0];
         if (latestCached) {
           const cachedPrice = toDecimalString(toDecimal(latestCached.close), 6);
@@ -334,7 +342,7 @@ export async function resolveQuotesForSymbols(
               referenceYear,
             )}`,
             unavailableReason:
-              dbInstr?.priceNotFoundReason ??
+              persistedReason ??
               `Ticker ${symbol} was not found on market providers.`,
             asOf: `${latestCached.date}T16:00:00.000Z`,
             effectiveDate: latestCached.date,
@@ -357,7 +365,7 @@ export async function resolveQuotesForSymbols(
           priceNotFound: true,
           freshnessLabel: "Price not found",
           unavailableReason:
-            dbInstr?.priceNotFoundReason ??
+            persistedReason ??
             `No market price found for ${symbol}. Automatic lookups are paused.`,
           asOf: null,
           effectiveDate: null,
