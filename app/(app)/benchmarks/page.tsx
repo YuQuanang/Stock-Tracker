@@ -8,9 +8,12 @@ export const metadata: Metadata = { title: "Benchmarks" };
 
 export default async function BenchmarksPage() {
   await connection();
+  // Render from DB-cached bars/quotes so the page appears immediately; the view
+  // then refreshes live market data in the browser after first paint.
   const initialSnapshot = await computePortfolioAnalytics({
     includeBenchmarks: true,
     includeFundamentals: false,
+    cacheOnly: true,
   });
 
   return (
@@ -19,7 +22,10 @@ export default async function BenchmarksPage() {
         title="Benchmarks"
         subtitle="Currency-aligned Time-Weighted Return, same-cash-flow simulations, and CAPM risk metrics."
       />
-      <BenchmarksView initialSnapshot={initialSnapshot} />
+      <BenchmarksView
+        initialSnapshot={initialSnapshot}
+        hydrateLiveOnMount={!initialSnapshot.accountHasNoTransactions}
+      />
     </>
   );
 }

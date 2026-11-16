@@ -42,6 +42,8 @@ import { formatSymbolForDisplay } from "@/lib/transactions/form-logic";
 
 interface BenchmarksViewProps {
   initialSnapshot: PortfolioAnalyticsSnapshot;
+  /** When true, the cached server snapshot is refreshed with live data after mount. */
+  hydrateLiveOnMount?: boolean;
 }
 
 type ViewTab = BenchmarkChartViewMode | "period-table";
@@ -79,7 +81,10 @@ function periodMetricCellClass(isLast: boolean): string {
 /**
  * Benchmarks & Portfolio Risk Analytics view (`/benchmarks`).
  */
-export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
+export function BenchmarksView({
+  initialSnapshot,
+  hydrateLiveOnMount = false,
+}: BenchmarksViewProps) {
   const [snapshot, setSnapshot] =
     useState<PortfolioAnalyticsSnapshot>(initialSnapshot);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(
@@ -132,6 +137,42 @@ export function BenchmarksView({ initialSnapshot }: BenchmarksViewProps) {
       abortRef.current?.abort();
     };
   }, []);
+
+  // The server renders from cached data for instant paint; fetch live data once
+  // in the background unless the user has already changed the scope.
+  useEffect(() => {
+    if (!hydrateLiveOnMount) {
+      return;
+    }
+    const controller = new AbortController();
+    const seqAtStart = requestSeqRef.current;
+    const qs = new URLSearchParams({
+      portfolioId: initialSnapshot.scope.portfolioFilterId,
+      currency: initialSnapshot.scope.currency,
+      includeBenchmarks: "true",
+      includeFundamentals: "false",
+    });
+    void fetch(`/api/analytics?${qs.toString()}`, { signal: controller.signal })
+      .then((res) =>
+        res.ok ? (res.json() as Promise<PortfolioAnalyticsSnapshot>) : null,
+      )
+      .then((fresh) => {
+        if (!fresh || requestSeqRef.current !== seqAtStart) {
+          return;
+        }
+        setSnapshot(fresh);
+      })
+      .catch(() => {
+        // Keep the cached snapshot if offline or aborted.
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [
+    hydrateLiveOnMount,
+    initialSnapshot.scope.portfolioFilterId,
+    initialSnapshot.scope.currency,
+  ]);
 
   // Custom benchmark ticker search
   const [searchQuery, setSearchQuery] = useState("");
