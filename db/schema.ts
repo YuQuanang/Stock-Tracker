@@ -93,7 +93,7 @@ export const settings = pgTable(
     riskFreeRate: numeric("risk_free_rate", { precision: 8, scale: 6 })
       .notNull()
       .default("0.035"),
-    defaultBenchmark: text("default_benchmark").notNull().default("^GSPC"),
+    defaultBenchmark: text("default_benchmark").notNull().default("VOO"),
     costBasisMethod: text("cost_basis_method").notNull().default("FIFO"),
     // How to read the "Shares Owned" field on Dividend rows (see CSV spec 7.4).
     dividendMode: dividendModeEnum("dividend_mode").notNull().default("cash"),
@@ -306,7 +306,10 @@ export const priceBar = pgTable(
     open: decimalColumn("open"),
     high: decimalColumn("high"),
     low: decimalColumn("low"),
+    // Unadjusted close used for holdings valuation (corporate actions handled via split lots).
     close: decimalColumn("close").notNull(),
+    // Dividend- & split-adjusted close used for total-return benchmark series.
+    adjClose: decimalColumn("adj_close"),
     volume: decimalColumn("volume"),
     // Which provider supplied the bar, for transparency and debugging.
     source: text("source").notNull().default("unknown"),

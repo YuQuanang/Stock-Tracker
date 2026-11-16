@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { formatCompactFreshness } from "@/lib/format";
+import { formatCompactFreshness, formatMoney } from "@/lib/format";
+
+describe("formatMoney", () => {
+  it("caps all formatted prices and monetary values at max 2 decimal places", () => {
+    expect(formatMoney("0.919", "SGD")).toBe("$0.92");
+    expect(formatMoney(0.0549, "USD")).toBe("US$0.05");
+    expect(formatMoney("12.3456", "USD")).toBe("US$12.35");
+    expect(formatMoney("12.3456", "USD", { maximumFractionDigits: 4 })).toBe("US$12.35");
+    expect(formatMoney(50.5, "USD")).toBe("US$50.50");
+    expect(formatMoney("-0.919", "SGD", { signed: true })).toBe("−$0.92");
+    expect(formatMoney("1234.56", "SGD", { maximumFractionDigits: 0 })).toBe("$1,235");
+    expect(formatMoney(null, "USD")).toBe("—");
+  });
+});
 
 describe("formatCompactFreshness", () => {
   it("strips verbose close prefixes while preserving the date", () => {

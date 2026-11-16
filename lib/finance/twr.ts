@@ -4,7 +4,7 @@
  *
  * TWR removes the distortion caused by the timing and size of external deposits
  * and withdrawals so you can compare your investment skill fairly against
- * market indices (`^GSPC`, `^IXIC`, `^DJI`, `^STI`).
+ * total-return benchmark ETFs (`VOO`, `ES3.SI`, `ONEQ`, `DIA`).
  */
 import {
   type DecimalInput,

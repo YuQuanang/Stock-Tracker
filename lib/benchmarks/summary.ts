@@ -1,49 +1,78 @@
-import { toDecimalString, toOptionalDecimal } from "@/lib/finance/decimal";
+/**
+ * Shared Benchmark Definitions & Summary Math (`lib/benchmarks/summary.ts`).
+ *
+ * Uses dividend-adjusted total-return ETFs converted into the user's selected
+ * reporting currency (`SGD` by default) so comparisons include reinvested
+ * dividends rather than price-only index levels:
+ *   - S&P 500:          VOO
+ *   - STI:              ES3.SI
+ *   - NASDAQ Composite: ONEQ
+ *   - Dow Jones:        DIA
+ */
+import { safeDivide, toDecimal, toDecimalString, toOptionalDecimal } from "@/lib/finance/decimal";
 
 export interface BenchmarkPreset {
   symbol: string;
   label: string;
 }
 
-/** Core comparison indexes shown in the Dashboard TWR summary. */
 export const CORE_COMPARISON_BENCHMARKS: readonly BenchmarkPreset[] = [
-  { symbol: "^GSPC", label: "S&P 500" },
-  { symbol: "^STI", label: "STI" },
-  { symbol: "^IXIC", label: "NASDAQ" },
+  { symbol: "VOO", label: "S&P 500" },
+  { symbol: "ES3.SI", label: "STI" },
+  { symbol: "ONEQ", label: "NASDAQ Composite" },
 ];
 
-/** Default preset benchmark chips shown on `/benchmarks`. */
 export const PRESET_BENCHMARKS: readonly BenchmarkPreset[] = [
   ...CORE_COMPARISON_BENCHMARKS,
-  { symbol: "^DJI", label: "Dow Jones" },
+  { symbol: "DIA", label: "Dow Jones" },
 ];
 
-const BENCHMARK_LABEL_MAP = new Map<string, string>(
-  PRESET_BENCHMARKS.map((preset) => [preset.symbol, preset.label]),
+export const DEFAULT_FOCUS_BENCHMARK = "VOO";
+
+const LEGACY_BENCHMARK_SYMBOL_MAP: Record<string, string> = {
+  "^GSPC": "VOO",
+  GSPC: "VOO",
+  "^STI": "ES3.SI",
+  STI: "ES3.SI",
+  "^IXIC": "ONEQ",
+  IXIC: "ONEQ",
+  "^DJI": "DIA",
+  DJI: "DIA",
+};
+
+const PRESET_LABEL_BY_SYMBOL = new Map<string, string>(
+  PRESET_BENCHMARKS.map((preset) => [preset.symbol.toUpperCase(), preset.label]),
 );
 
-/** Resolves a concise Apple-clean benchmark display name for UI tables and legends. */
-export function resolveBenchmarkLabel(
-  symbol: string,
-  fetchedName?: string | null,
-): string {
-  const upper = symbol.trim().toUpperCase();
-  return BENCHMARK_LABEL_MAP.get(upper) ?? fetchedName ?? upper;
-}
-
 /**
- * Computes exact percentage-point spread (`portfolioPct - benchmarkPct`),
- * returning `null` if either return is missing.
+ * Maps legacy price-index tickers (`^GSPC`, `^STI`, `^IXIC`, `^DJI`) saved in
+ * older settings rows onto their total-return ETF equivalents while preserving
+ * any custom ETF or stock ticker entered by the user.
  */
-export function computeReturnSpread(
-  portfolioPct: string | null | undefined,
-  benchmarkPct: string | null | undefined,
-): string | null {
-  const p = toOptionalDecimal(portfolioPct);
-  const b = toOptionalDecimal(benchmarkPct);
-  if (!p || !b) {
-    return null;
-  }
-  return toDecimalString(p.minus(b), 2);
+export function normalizeBenchmarkSymbol(symbol: string): string {
+  const upper = symbol.trim().toUpperCase();
+  if (!upper) return DEFAULT_FOCUS_BENCHMARK;
+  return LEGACY_BENCHMARK_SYMBOL_MAP[upper] ?? upper;
 }
 
+export function resolveBenchmarkLabel(symbol: string, rawName?: string | null): string {
+  const canonical = normalizeBenchmarkSymbol(symbol);
+  const preset = PRESET_LABEL_BY_SYMBOL.get(canonical);
+  if (preset) return preset;
+  const trimmed = rawName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : canonical;
+}
+
+export function computeReturnSpread(
+  portfolioReturnPercent: string | null | undefined,
+  benchmarkReturnPercent: string | null | undefined,
+): string | null {
+  const port = toOptionalDecimal(portfolioReturnPercent);
+  const bench = toOptionalDecimal(benchmarkReturnPercent);
+  if (port === null || bench === null) return null;
+  const spread = port.minus(bench);
+  if (!spread.isFinite()) return null;
+  // Sanity check through Decimal helper so -0.00 collapses cleanly to 0.00
+  const normalized = safeDivide(spread, toDecimal(1)) ?? spread;
+  return toDecimalString(normalized, 2);
+}

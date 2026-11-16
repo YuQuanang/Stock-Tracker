@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Info } from "lucide-react";
+import { CircleHelp, Info } from "lucide-react";
 
 interface MetricTooltipProps {
   label: string;
   explanation: string;
+  variant?: "info" | "help";
 }
 
 /**
  * Accessible info popover explaining complex portfolio metrics (TWR, XIRR,
  * Sharpe, Beta, Alpha, Drawdown) in plain English without cluttering cards.
  */
-export function MetricTooltip({ label, explanation }: MetricTooltipProps) {
+export function MetricTooltip({
+  label,
+  explanation,
+  variant = "info",
+}: MetricTooltipProps) {
   const [open, setOpen] = useState(false);
   const tooltipId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -55,7 +60,11 @@ export function MetricTooltip({ label, explanation }: MetricTooltipProps) {
         onMouseLeave={() => setOpen(false)}
         className="inline-flex h-5 w-5 items-center justify-center rounded-[8px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
-        <Info size={16} strokeWidth={1.75} aria-hidden="true" />
+        {variant === "help" ? (
+          <CircleHelp size={16} strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <Info size={16} strokeWidth={1.75} aria-hidden="true" />
+        )}
       </button>
 
       {open && (

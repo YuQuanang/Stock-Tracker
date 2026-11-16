@@ -32,6 +32,8 @@ interface PortfolioValueChartProps {
   points: readonly PortfolioValuePoint[];
   currency: "SGD" | "USD";
   excludedUnpricedSymbols?: readonly string[];
+  range?: AnalyticsChartRange;
+  onRangeChange?: (nextRange: AnalyticsChartRange) => void;
 }
 
 interface CrosshairSnapshot {
@@ -48,10 +50,14 @@ export function PortfolioValueChart({
   points,
   currency,
   excludedUnpricedSymbols = [],
+  range: controlledRange,
+  onRangeChange,
 }: PortfolioValueChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { palette, themeTick } = useChartThemePalette();
-  const [range, setRange] = useState<AnalyticsChartRange>("1Y");
+  const [internalRange, setInternalRange] = useState<AnalyticsChartRange>("1Y");
+  const range = controlledRange ?? internalRange;
+  const setRange = onRangeChange ?? setInternalRange;
   const [showCostBasis, setShowCostBasis] = useState(true);
   const [hoverPoint, setHoverPoint] = useState<CrosshairSnapshot | null>(null);
 
@@ -157,6 +163,7 @@ export function PortfolioValueChart({
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
     lineSeries.setData(mvPoints);
 
@@ -167,6 +174,7 @@ export function PortfolioValueChart({
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
         lastValueVisible: false,
+        priceFormat: { type: "price", precision: 2, minMove: 0.01 },
       });
       costSeries.setData(cbPoints);
     }

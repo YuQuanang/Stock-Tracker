@@ -119,8 +119,8 @@ export function InlineTransactionRow({
           {tx.type === "Dividend"
             ? `Cash dividend ${formatMoney(tx.quantity, tx.currency)}`
             : tx.type === "Sell All"
-              ? `All open shares @ ${formatMoney(tx.price, tx.currency, { maximumFractionDigits: 4 })}`
-              : `${formatQuantity(tx.quantity)} sh @ ${formatMoney(tx.price, tx.currency, { maximumFractionDigits: 4 })}`}
+              ? `All open shares @ ${formatMoney(tx.price, tx.currency)}`
+              : `${formatQuantity(tx.quantity)} sh @ ${formatMoney(tx.price, tx.currency)}`}
           {tx.commissionRaw && tx.commissionRaw !== "0"
             ? ` · Fee ${tx.commissionRaw}`
             : ""}

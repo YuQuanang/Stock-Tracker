@@ -592,9 +592,7 @@ export function StockDetailView({
                   ref={priceFlashRef}
                   className="num inline-block rounded-[8px] text-[30px] font-semibold tracking-tight text-ink sm:text-[32px]"
                 >
-                  {formatMoney(effectiveUnitPrice, instrument.currency, {
-                    maximumFractionDigits: 4,
-                  })}
+                  {formatMoney(effectiveUnitPrice, instrument.currency)}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-2 sm:justify-end">
                   {!hasActiveOverride && (
@@ -744,7 +742,6 @@ export function StockDetailView({
                   {formatMoney(
                     valuedRow.averageCostPerShare,
                     instrument.currency,
-                    { maximumFractionDigits: 4 },
                   )}
                 </dd>
               </div>
@@ -1058,9 +1055,7 @@ export function StockDetailView({
                       <div className="num flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-ink-2">
                         <span>
                           {formatQuantity(lot.remainingShares)} sh @{" "}
-                          {formatMoney(lot.costPerShare, instrument.currency, {
-                            maximumFractionDigits: 4,
-                          })}
+                          {formatMoney(lot.costPerShare, instrument.currency)}
                         </span>
                         <span>
                           Value{" "}
@@ -1118,7 +1113,6 @@ export function StockDetailView({
                             {formatMoney(
                               lot.costPerShare,
                               instrument.currency,
-                              { maximumFractionDigits: 4 },
                             )}
                           </td>
                           <td className="num whitespace-nowrap px-3 py-3.5 text-right">

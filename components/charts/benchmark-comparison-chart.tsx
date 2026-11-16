@@ -6,7 +6,6 @@ import {
   createChart,
   CrosshairMode,
   type IChartApi,
-  type ISeriesApi,
   LineSeries,
   LineStyle,
 } from "lightweight-charts";
@@ -18,17 +17,16 @@ import {
   SERIES_PALETTE,
   useChartThemePalette,
 } from "@/lib/charts/theme";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, formatPercent } from "@/lib/format";
+import type { SameCashFlowsSimulationResult } from "@/lib/finance/risk-metrics";
 import type { BenchmarkSeriesData } from "@/lib/services/analytics";
 
-export type BenchmarkChartViewMode = "rebased" | "same-cash-flows";
-
 interface BenchmarkComparisonChartProps {
-  mode: BenchmarkChartViewMode;
   currency: "SGD" | "USD";
-  portfolioSeries: readonly { date: string; twrIndex: string | null }[];
   selectedBenchmarks: readonly BenchmarkSeriesData[];
   primaryBenchmark: BenchmarkSeriesData | null;
+  range?: AnalyticsChartRange;
+  onRangeChange?: (nextRange: AnalyticsChartRange) => void;
 }
 
 const BENCH_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
@@ -44,6 +42,17 @@ const BENCH_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
 interface HoveredReadout {
   date: string;
   values: Record<string, number>;
+}
+
+interface SimulatedFundSeries {
+  symbol: string;
+  displaySymbol: string;
+  name: string;
+  label: string;
+  color: string;
+  isFocus: boolean;
+  summary: SameCashFlowsSimulationResult;
+  series: ReturnType<typeof filterPointsByAnalyticsRange<SameCashFlowsSimulationResult["dailySeries"][number]>>;
 }
 
 function formatCrosshairTime(time: unknown): string | null {
@@ -63,125 +72,78 @@ function formatCrosshairTime(time: unknown): string | null {
   return String(time);
 }
 
-function rebaseWindowTo100(
-  points: readonly { date: string; value: number }[],
-): { date: string; value: number }[] {
-  if (points.length === 0) return [];
-  const firstVal = points[0].value;
-  if (!(firstVal > 0)) return [];
-  return points.map((p) => ({
-    date: p.date,
-    value: Number(((p.value / firstVal) * 100).toFixed(4)),
-  }));
-}
-
 /**
- * Dual-mode Benchmark Comparison Chart built on Lightweight Charts v5:
- *  - **"Rebased to 100"**: multi-line TWR vs benchmarks starting cleanly at 100
- *  - **"Same cash flows"**: actual portfolio value vs hypothetical benchmark equity
- *    generated from identical cash contributions and withdrawals
+ * Interactive "Same cash flows" chart comparing actual portfolio market value
+ * against investing the exact same cash flows into every toggled benchmark fund,
+ * with simulated sells capped so no simulated position ever goes negative.
  */
 export function BenchmarkComparisonChart({
-  mode,
   currency,
-  portfolioSeries,
   selectedBenchmarks,
   primaryBenchmark,
+  range: controlledRange,
+  onRangeChange,
 }: BenchmarkComparisonChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { palette, themeTick } = useChartThemePalette();
-  const [range, setRange] = useState<AnalyticsChartRange>("MAX");
+  const [internalRange, setInternalRange] = useState<AnalyticsChartRange>("MAX");
+  const range = controlledRange ?? internalRange;
+  const setRange = onRangeChange ?? setInternalRange;
   const [hovered, setHovered] = useState<HoveredReadout | null>(null);
 
-  const rebasedLines = useMemo(() => {
-    if (mode !== "rebased") {
-      return [];
-    }
-
-    const activePortfolio = portfolioSeries
-      .filter((p) => p.twrIndex !== null && Number(p.twrIndex) > 0)
-      .map((p) => ({ date: p.date, value: Number(p.twrIndex!) }));
-
-    const slicedPortfolio = rebaseWindowTo100(
-      filterPointsByAnalyticsRange(activePortfolio, range),
-    );
-
-    const startAnchor = slicedPortfolio[0]?.date ?? null;
-
-    const lines: {
-      key: string;
-      label: string;
-      color: string;
-      isPortfolio: boolean;
-      data: { date: string; value: number }[];
-    }[] = [];
-
-    if (slicedPortfolio.length >= 2) {
-      lines.push({
-        key: "__portfolio__",
-        label: "Your Portfolio (TWR)",
-        color: palette.accent,
-        isPortfolio: true,
-        data: slicedPortfolio,
-      });
-    }
+  const simulationModel = useMemo(() => {
+    const activeFunds: SimulatedFundSeries[] = [];
 
     selectedBenchmarks.forEach((bench, idx) => {
-      if (bench.status !== "ok" || bench.rebasedSeries.length < 2) {
+      if (bench.status !== "ok" || !bench.sameCashFlows) {
         return;
       }
-      const rawPoints = bench.rebasedSeries
-        .map((p) => ({ date: p.date, value: Number(p.value) }))
-        .filter((p) => Number.isFinite(p.value) && p.value > 0);
-
-      const filtered = startAnchor
-        ? rawPoints.filter((p) => p.date >= startAnchor)
-        : filterPointsByAnalyticsRange(rawPoints, range);
-
-      const rebased = rebaseWindowTo100(
-        filtered.length >= 2 ? filtered : rawPoints,
+      const filtered = filterPointsByAnalyticsRange(
+        bench.sameCashFlows.dailySeries,
+        range,
       );
-
-      if (rebased.length >= 2) {
-        lines.push({
-          key: bench.symbol,
-          label: `${bench.name} (${bench.displaySymbol})`,
-          color: SERIES_PALETTE[(idx + 1) % (SERIES_PALETTE.length - 1)],
-          isPortfolio: false,
-          data: rebased,
-        });
+      if (filtered.length === 0) {
+        return;
       }
+      const color = SERIES_PALETTE[(idx + 1) % (SERIES_PALETTE.length - 1)];
+      activeFunds.push({
+        symbol: bench.symbol,
+        displaySymbol: bench.displaySymbol,
+        name: bench.name,
+        label: `${bench.name} (${bench.displaySymbol})`,
+        color,
+        isFocus: primaryBenchmark?.symbol === bench.symbol,
+        summary: bench.sameCashFlows,
+        series: filtered,
+      });
     });
 
-    return lines;
-  }, [mode, portfolioSeries, selectedBenchmarks, range, palette.accent]);
-
-  const cashFlowSimulation = useMemo(() => {
-    if (mode !== "same-cash-flows" || !primaryBenchmark?.sameCashFlows) {
+    if (activeFunds.length === 0) {
       return null;
     }
-    const filtered = filterPointsByAnalyticsRange(
-      primaryBenchmark.sameCashFlows.dailySeries,
-      range,
-    );
+
+    // Use the focus fund (or longest simulated span) as the baseline portfolio & net-contributed curve.
+    const baseline =
+      activeFunds.find((f) => f.isFocus) ??
+      activeFunds.reduce((best, cur) =>
+        cur.series.length > best.series.length ? cur : best,
+      );
+
     return {
-      summary: primaryBenchmark.sameCashFlows,
-      series: filtered,
-      benchLabel: `${primaryBenchmark.name} (${primaryBenchmark.displaySymbol})`,
+      funds: activeFunds,
+      focusFund: activeFunds.find((f) => f.isFocus) ?? activeFunds[0],
+      baselineSummary: baseline.summary,
+      baselineSeries: baseline.series,
     };
-  }, [mode, primaryBenchmark, range]);
+  }, [selectedBenchmarks, primaryBenchmark, range]);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
-
-    const hasRebased = mode === "rebased" && rebasedLines.length > 0;
-    const hasCashFlow =
-      mode === "same-cash-flows" &&
-      cashFlowSimulation !== null &&
-      cashFlowSimulation.series.length > 0;
-
-    if (!hasRebased && !hasCashFlow) {
+    if (
+      !el ||
+      !simulationModel ||
+      simulationModel.baselineSeries.length === 0
+    ) {
       return;
     }
 
@@ -227,136 +189,98 @@ export function BenchmarkComparisonChart({
     });
 
     const valueLookupBySeriesKey = new Map<string, Map<string, number>>();
-    const allSeriesHandles: { key: string; series: ISeriesApi<"Line"> }[] = [];
 
-    if (mode === "rebased") {
-      for (const line of rebasedLines) {
-        const s = chart.addSeries(LineSeries, {
-          color: line.color,
-          lineWidth: line.isPortfolio ? 3 : 2,
-          priceLineVisible: false,
-          lastValueVisible: true,
-        });
-        s.setData(line.data.map((d) => ({ time: d.date, value: d.value })));
-        valueLookupBySeriesKey.set(
-          line.key,
-          new Map(line.data.map((d) => [d.date, d.value])),
-        );
-        allSeriesHandles.push({ key: line.key, series: s });
-      }
-    } else if (cashFlowSimulation) {
-      const pSeries = chart.addSeries(LineSeries, {
-        color: palette.accent,
-        lineWidth: 3,
-        priceLineVisible: false,
-        lastValueVisible: true,
-      });
-      pSeries.setData(
-        cashFlowSimulation.series.map((p) => ({
-          time: p.date,
-          value: Number(p.portfolioValue),
-        })),
-      );
+    const pSeries = chart.addSeries(LineSeries, {
+      color: palette.accent,
+      lineWidth: 3,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    pSeries.setData(
+      simulationModel.baselineSeries.map((p) => ({
+        time: p.date,
+        value: Number(p.portfolioValue),
+      })),
+    );
+    valueLookupBySeriesKey.set(
+      "portfolio",
+      new Map(
+        simulationModel.baselineSeries.map((p) => [
+          p.date,
+          Number(p.portfolioValue),
+        ]),
+      ),
+    );
 
+    for (const fund of simulationModel.funds) {
       const bSeries = chart.addSeries(LineSeries, {
-        color: SERIES_PALETTE[1],
+        color: fund.color,
         lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: true,
+        priceFormat: { type: "price", precision: 2, minMove: 0.01 },
       });
       bSeries.setData(
-        cashFlowSimulation.series.map((p) => ({
+        fund.series.map((p) => ({
           time: p.date,
           value: Number(p.benchmarkValue),
         })),
       );
-
-      const cSeries = chart.addSeries(LineSeries, {
-        color: palette.ink3,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      cSeries.setData(
-        cashFlowSimulation.series.map((p) => ({
-          time: p.date,
-          value: Number(p.netContributed),
-        })),
-      );
-
       valueLookupBySeriesKey.set(
-        "portfolio",
-        new Map(
-          cashFlowSimulation.series.map((p) => [
-            p.date,
-            Number(p.portfolioValue),
-          ]),
-        ),
-      );
-      valueLookupBySeriesKey.set(
-        "benchmark",
-        new Map(
-          cashFlowSimulation.series.map((p) => [
-            p.date,
-            Number(p.benchmarkValue),
-          ]),
-        ),
-      );
-      valueLookupBySeriesKey.set(
-        "netContributed",
-        new Map(
-          cashFlowSimulation.series.map((p) => [
-            p.date,
-            Number(p.netContributed),
-          ]),
-        ),
-      );
-      allSeriesHandles.push(
-        { key: "portfolio", series: pSeries },
-        { key: "benchmark", series: bSeries },
-        { key: "netContributed", series: cSeries },
+        `bench:${fund.symbol}`,
+        new Map(fund.series.map((p) => [p.date, Number(p.benchmarkValue)])),
       );
     }
+
+    const cSeries = chart.addSeries(LineSeries, {
+      color: palette.ink3,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    cSeries.setData(
+      simulationModel.baselineSeries.map((p) => ({
+        time: p.date,
+        value: Number(p.netContributed),
+      })),
+    );
+    valueLookupBySeriesKey.set(
+      "netContributed",
+      new Map(
+        simulationModel.baselineSeries.map((p) => [
+          p.date,
+          Number(p.netContributed),
+        ]),
+      ),
+    );
 
     chart.timeScale().fitContent();
 
     chart.subscribeCrosshairMove((param) => {
       const dateStr = formatCrosshairTime(param.time);
-      if (
-        !dateStr ||
-        !param.point ||
-        param.point.x < 0 ||
-        param.point.y < 0
-      ) {
+      if (!dateStr) {
         setHovered(null);
         return;
       }
-      const values: Record<string, number> = {};
-      for (const handle of allSeriesHandles) {
-        const direct = valueLookupBySeriesKey.get(handle.key)?.get(dateStr);
-        if (direct !== undefined) {
-          values[handle.key] = direct;
-        } else {
-          const dataPoint = param.seriesData.get(handle.series) as
-            | { value?: number }
-            | undefined;
-          if (dataPoint && typeof dataPoint.value === "number") {
-            values[handle.key] = dataPoint.value;
-          }
+      const vals: Record<string, number> = {};
+      for (const [key, lookup] of valueLookupBySeriesKey.entries()) {
+        const matched = lookup.get(dateStr);
+        if (matched !== undefined && Number.isFinite(matched)) {
+          vals[key] = matched;
         }
       }
-      setHovered({ date: dateStr, values });
+      if (Object.keys(vals).length > 0) {
+        setHovered({ date: dateStr, values: vals });
+      }
     });
 
-    let lastObservedWidth = Math.floor(el.clientWidth);
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry) return;
-      const nextWidth = Math.floor(entry.contentRect.width);
-      if (nextWidth > 0 && nextWidth !== lastObservedWidth) {
-        lastObservedWidth = nextWidth;
-        chart.applyOptions({ width: nextWidth });
+      if (entry && entry.contentRect.width > 0) {
+        chart.applyOptions({ width: Math.floor(entry.contentRect.width) });
       }
     });
     resizeObserver.observe(el);
@@ -366,26 +290,21 @@ export function BenchmarkComparisonChart({
       chart.remove();
       setHovered(null);
     };
-  }, [mode, rebasedLines, cashFlowSimulation, palette, themeTick]);
+  }, [simulationModel, palette, themeTick]);
 
   const noData =
-    (mode === "rebased" && rebasedLines.length === 0) ||
-    (mode === "same-cash-flows" && !cashFlowSimulation);
-
-  const firstDate =
-    mode === "rebased"
-      ? (rebasedLines[0]?.data[0]?.date ?? null)
-      : (cashFlowSimulation?.series[0]?.date ?? null);
-
+    !simulationModel || simulationModel.baselineSeries.length === 0;
+  const firstDate = simulationModel?.baselineSeries[0]?.date ?? null;
   const latestDate =
-    mode === "rebased"
-      ? (rebasedLines[0]?.data[rebasedLines[0].data.length - 1]?.date ?? null)
-      : (cashFlowSimulation?.series[cashFlowSimulation.series.length - 1]
-          ?.date ?? null);
+    simulationModel?.baselineSeries[simulationModel.baselineSeries.length - 1]
+      ?.date ?? null;
+  const cappedSymbols =
+    simulationModel?.funds
+      .filter((f) => f.summary.benchmarkWasCapped)
+      .map((f) => f.displaySymbol) ?? [];
 
   return (
-    <div className="space-y-3">
-      {/* Toolbar & Legend separated cleanly so scrubbing never shifts controls or chart height */}
+    <div className="space-y-4">
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           <p className="text-[12px] text-ink-2 whitespace-nowrap">
@@ -429,33 +348,7 @@ export function BenchmarkComparisonChart({
         </div>
 
         <div className="min-h-[26px] flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px]">
-          {mode === "rebased" &&
-            rebasedLines.map((line) => {
-              const latestVal = line.data[line.data.length - 1]?.value ?? 100;
-              const val = hovered?.values[line.key] ?? latestVal;
-              const pctChange = val - 100;
-              return (
-                <span
-                  key={line.key}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: line.color }}
-                  />
-                  <span className="font-medium text-ink">{line.label}</span>
-                  <span className="num text-ink-2">
-                    {val.toFixed(1)} (
-                    {pctChange >= 0
-                      ? `+${pctChange.toFixed(1)}%`
-                      : `${pctChange.toFixed(1)}%`}
-                    )
-                  </span>
-                </span>
-              );
-            })}
-
-          {mode === "same-cash-flows" && cashFlowSimulation && (
+          {simulationModel && (
             <>
               <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                 <span
@@ -466,34 +359,44 @@ export function BenchmarkComparisonChart({
                 <span className="num text-ink-2">
                   {formatMoney(
                     hovered?.values.portfolio ??
-                      cashFlowSimulation.summary.portfolioFinalValue,
+                      simulationModel.baselineSummary.portfolioFinalValue,
                     currency,
                   )}
                 </span>
               </span>
-              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+
+              {simulationModel.funds.map((fund) => (
                 <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: SERIES_PALETTE[1] }}
-                />
-                <span className="font-medium text-ink">
-                  {cashFlowSimulation.benchLabel}
+                  key={fund.symbol}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: fund.color }}
+                  />
+                  <span
+                    className="font-medium text-ink"
+                    title={`total return, dividends reinvested, ${currency}`}
+                  >
+                    {fund.displaySymbol}
+                  </span>
+                  <span className="num text-ink-2">
+                    {formatMoney(
+                      hovered?.values[`bench:${fund.symbol}`] ??
+                        fund.summary.benchmarkFinalValue,
+                      currency,
+                    )}
+                  </span>
                 </span>
-                <span className="num text-ink-2">
-                  {formatMoney(
-                    hovered?.values.benchmark ??
-                      cashFlowSimulation.summary.benchmarkFinalValue,
-                    currency,
-                  )}
-                </span>
-              </span>
+              ))}
+
               <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-3">
                 <span className="h-1.5 w-3 border-t-2 border-dashed border-ink-3" />
                 Net contributed{" "}
                 <span className="num font-medium text-ink-2">
                   {formatMoney(
                     hovered?.values.netContributed ??
-                      cashFlowSimulation.summary.netContributed,
+                      simulationModel.baselineSummary.netContributed,
                     currency,
                   )}
                 </span>
@@ -505,68 +408,204 @@ export function BenchmarkComparisonChart({
 
       {noData ? (
         <div className="flex h-64 items-center justify-center rounded-[12px] border border-dashed border-line bg-surface-2 px-4 text-center text-[13px] text-ink-2">
-          Select at least one benchmark or record portfolio transactions to
-          compare historical performance.
+          Toggle at least one fund above or record portfolio transactions to
+          simulate same-cash-flow performance in {currency}.
         </div>
       ) : (
         <div
           ref={containerRef}
           className="w-full"
-          aria-label={`Benchmark comparison chart in ${currency}`}
+          aria-label={`Same cash flows comparison chart in ${currency}`}
         />
       )}
 
-      {mode === "same-cash-flows" && cashFlowSimulation && (
-        <div className="grid grid-cols-1 gap-3 rounded-[12px] border border-line bg-surface-2 p-4 sm:grid-cols-3">
-          <div>
-            <p className="text-[12px] font-medium text-ink-2">
-              Your total profit
-            </p>
-            <div className="mt-1">
-              <GainBadge
-                amount={cashFlowSimulation.summary.portfolioTotalGain}
-                currency={currency}
-                percent={cashFlowSimulation.summary.portfolioTotalGainPercent}
-                size="md"
-              />
+      {simulationModel && (
+        <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-[13.5px] font-semibold text-ink">
+                Side-by-Side Same Cash Flows ({currency})
+              </h3>
+              <p className="text-[12px] text-ink-3">
+                Every buy and sell mirrored into each toggled fund using
+                dividend-adjusted closes (total return, dividends reinvested,{" "}
+                {currency}).
+              </p>
             </div>
-          </div>
-
-          <div>
-            <p className="text-[12px] font-medium text-ink-2">
-              If invested in <span className="font-mono">{primaryBenchmark?.displaySymbol}</span>
-            </p>
-            <div className="mt-1">
+            <div className="flex items-center gap-2">
               <GainBadge
-                amount={cashFlowSimulation.summary.benchmarkTotalGain}
+                amount={simulationModel.focusFund.summary.excessGain}
                 currency={currency}
-                percent={cashFlowSimulation.summary.benchmarkTotalGainPercent}
-                size="md"
-              />
-            </div>
-          </div>
-
-          <div>
-            <p className="text-[12px] font-medium text-ink-2">
-              Relative advantage ({currency})
-            </p>
-            <div className="mt-1 flex items-center gap-2">
-              <GainBadge
-                amount={cashFlowSimulation.summary.excessGain}
-                currency={currency}
-                size="md"
+                size="sm"
                 pill
               />
               <span className="text-[12px] text-ink-2">
-                {cashFlowSimulation.summary.benchmarkOutperformed
-                  ? "ahead of index"
-                  : "behind index"}
+                {simulationModel.focusFund.summary.benchmarkOutperformed
+                  ? `ahead of ${simulationModel.focusFund.displaySymbol}`
+                  : `behind ${simulationModel.focusFund.displaySymbol}`}
               </span>
             </div>
           </div>
+
+          <div className="overflow-x-auto">
+            <table
+              className="w-full table-fixed text-left text-[13px]"
+              style={{
+                minWidth: `${330 + simulationModel.funds.length * 165}px`,
+              }}
+            >
+              <colgroup>
+                <col className="w-[175px]" />
+                <col className="w-[155px]" />
+                {simulationModel.funds.map((fund) => (
+                  <col key={fund.symbol} />
+                ))}
+              </colgroup>
+              <thead className="border-b border-line text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
+                <tr>
+                  <th className="py-2 pr-4">Metric</th>
+                  <th className="bg-accent/6 px-3 py-2 text-right text-ink whitespace-nowrap">
+                    Your Portfolio
+                  </th>
+                  {simulationModel.funds.map((fund) => (
+                    <th key={fund.symbol} className="px-3 py-2 text-right text-ink">
+                      <span className="inline-flex max-w-full items-center justify-end gap-1.5">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: fund.color }}
+                        />
+                        <span className="truncate">{fund.name}</span>
+                        <span className="shrink-0 font-mono text-[11px] text-ink-3">
+                          {fund.displaySymbol}
+                        </span>
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">Total money put in</td>
+                  <td className="num bg-accent/6 px-3 py-2.5 text-right font-medium text-ink">
+                    {formatMoney(
+                      simulationModel.baselineSummary.totalDeposited,
+                      currency,
+                    )}
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td
+                      key={fund.symbol}
+                      className="num px-3 py-2.5 text-right font-medium text-ink"
+                    >
+                      {formatMoney(fund.summary.benchmarkDeposited, currency)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">Money taken out</td>
+                  <td className="num bg-accent/6 px-3 py-2.5 text-right font-medium text-ink">
+                    {formatMoney(
+                      simulationModel.baselineSummary.totalWithdrawn,
+                      currency,
+                    )}
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td
+                      key={fund.symbol}
+                      className="num px-3 py-2.5 text-right font-medium text-ink"
+                    >
+                      {formatMoney(fund.summary.benchmarkWithdrawn, currency)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">Current value</td>
+                  <td className="num bg-accent/6 px-3 py-2.5 text-right font-medium text-ink">
+                    {formatMoney(
+                      simulationModel.baselineSummary.portfolioFinalValue,
+                      currency,
+                    )}
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td
+                      key={fund.symbol}
+                      className="num px-3 py-2.5 text-right font-medium text-ink"
+                    >
+                      {formatMoney(fund.summary.benchmarkFinalValue, currency)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">Dollar profit</td>
+                  <td className="bg-accent/6 px-3 py-2.5 text-right">
+                    <GainBadge
+                      amount={simulationModel.baselineSummary.portfolioTotalGain}
+                      currency={currency}
+                      size="sm"
+                    />
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td key={fund.symbol} className="px-3 py-2.5 text-right">
+                      <GainBadge
+                        amount={fund.summary.benchmarkTotalGain}
+                        currency={currency}
+                        size="sm"
+                      />
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">XIRR (annualized)</td>
+                  <td className="num bg-accent/6 px-3 py-2.5 text-right font-semibold text-ink">
+                    {simulationModel.baselineSummary.portfolioXirrPercent !== null
+                      ? formatPercent(
+                          simulationModel.baselineSummary.portfolioXirrPercent,
+                          { signed: true },
+                        )
+                      : "—"}
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td
+                      key={fund.symbol}
+                      className="num px-3 py-2.5 text-right font-semibold text-ink"
+                    >
+                      {fund.summary.benchmarkXirrPercent !== null
+                        ? formatPercent(fund.summary.benchmarkXirrPercent, {
+                            signed: true,
+                          })
+                        : "—"}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td className="py-2.5 pr-4 text-ink-2">You vs fund</td>
+                  <td className="bg-accent/6 px-3 py-2.5 text-right text-[11.5px] font-medium text-accent">
+                    Baseline
+                  </td>
+                  {simulationModel.funds.map((fund) => (
+                    <td key={fund.symbol} className="px-3 py-2.5 text-right">
+                      <GainBadge
+                        amount={fund.summary.excessGain}
+                        currency={currency}
+                        size="sm"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {cappedSymbols.length > 0 && (
+            <p className="text-[11.5px] text-ink-3">
+              Note: Simulated sells in{" "}
+              <span className="font-mono">{cappedSymbols.join(", ")}</span>{" "}
+              exceeded available fund holdings on one or more sell dates and
+              were capped so the simulated position never went negative.
+            </p>
+          )}
         </div>
       )}
     </div>
   );
 }
-

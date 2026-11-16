@@ -313,4 +313,147 @@ describe("Milestone 7 Pure Finance Analytics Formulas", () => {
     expect(Number(timeline.endingMarketValue)).toBe(1523.2);
     expect(timeline.excludedUnpricedSymbols).toEqual([]);
   });
+
+  it("caps simulated fund sells at available holdings so position never goes negative and computes fund XIRR", () => {
+    const benchmarkPrices = new Map<string, string>([
+      ["2025-01-02", "100"],
+      ["2025-06-02", "110"], // Fund value = $1,100
+      ["2026-01-02", "132"], // +20% after June
+    ]);
+
+    // User puts $1,000 in, user's stock surges and user withdraws $2,500 on Jun 2.
+    // Simulated fund only has $1,100 available -> capped sell at $1,100 -> 0 units left, value NEVER negative!
+    const sim = computeSameCashFlowsSimulation({
+      benchmarkSymbol: "VOO",
+      portfolioSeries: [
+        { date: "2025-01-02", portfolioValue: "1000" },
+        { date: "2025-06-02", portfolioValue: "500" },
+        { date: "2026-01-02", portfolioValue: "600" },
+      ],
+      externalCashFlows: [
+        { date: "2025-01-02", netFlow: "1000" },
+        { date: "2025-06-02", netFlow: "-2500" },
+      ],
+      benchmarkPricesByDate: benchmarkPrices,
+    });
+
+    expect(sim).not.toBeNull();
+    expect(sim!.benchmarkWasCapped).toBe(true);
+    expect(Number(sim!.benchmarkDeposited)).toBe(1000);
+    expect(Number(sim!.benchmarkWithdrawn)).toBe(1100);
+    expect(Number(sim!.benchmarkFinalValue)).toBe(0);
+    expect(Number(sim!.benchmarkTotalGain)).toBe(100);
+    expect(sim!.benchmarkXirrPercent).not.toBeNull();
+    expect(Number(sim!.benchmarkXirrPercent)).toBeGreaterThan(20);
+    expect(
+      sim!.dailySeries.every((pt) => Number(pt.benchmarkValue) >= 0),
+    ).toBe(true);
+  });
+
+  it("sanity-checks dollar profit against simulation using portfolio's own TWR series and cash flows", () => {
+    // Reconstruct timeline with Buy + fee, partial Sell + fee, and Cash Dividend
+    const fxBook = new FxRateBook([
+      { date: "2025-01-02", fromCurrency: "USD", toCurrency: "SGD", rate: "1" },
+      { date: "2025-07-02", fromCurrency: "USD", toCurrency: "SGD", rate: "1" },
+      { date: "2026-01-02", fromCurrency: "USD", toCurrency: "SGD", rate: "1" },
+    ]);
+    const dailyBarsByInstrument = new Map<string, Map<string, string>>([
+      [
+        "inst-1",
+        new Map([
+          ["2025-01-02", "100"],
+          ["2025-07-02", "120"],
+          ["2026-01-02", "150"],
+        ]),
+      ],
+    ]);
+
+    const timeline = reconstructPortfolioTimeline({
+      buckets: [
+        {
+          portfolioId: "p-1",
+          portfolioName: "Core",
+          instrumentId: "inst-1",
+          symbol: "VOO",
+          currency: "SGD",
+          manualPrice: null,
+          isDelisted: false,
+          transactions: [
+            {
+              id: "b1",
+              type: "Buy",
+              quantity: "10",
+              price: "100",
+              commissionRaw: "10",
+              executedAt: new Date("2025-01-02T04:00:00Z"),
+              originalOffset: "+0800",
+              currency: "SGD",
+            },
+            {
+              id: "s1",
+              type: "Sell",
+              quantity: "4",
+              price: "120",
+              commissionRaw: "5",
+              executedAt: new Date("2025-07-02T04:00:00Z"),
+              originalOffset: "+0800",
+              currency: "SGD",
+            },
+            {
+              id: "d1",
+              type: "Dividend",
+              quantity: "25",
+              price: "0",
+              commissionRaw: "0",
+              executedAt: new Date("2025-07-02T05:00:00Z"),
+              originalOffset: "+0800",
+              currency: "SGD",
+            },
+          ],
+        },
+      ],
+      splitsByInstrument: new Map(),
+      dailyBarsByInstrument,
+      fxBook,
+      baseCurrency: "SGD",
+      dividendMode: "cash",
+      asOfDate: "2026-01-02",
+    });
+
+    // Put in: 10*100 + 10 = 1010. Taken out: (4*120 - 5) + 25 = 500.
+    // Ending MV: 6 shares * 150 = 900. Profit = 900 + 500 - 1010 = 390.
+    // Realized: 475 - (4/10)*1010 = 71. Unrealized: 900 - 606 = 294. Div: 25. Fees: 15.
+    expect(Number(timeline.totalDepositsInBase)).toBe(1010);
+    expect(Number(timeline.totalWithdrawalsAndDividendsInBase)).toBe(500);
+    expect(Number(timeline.endingMarketValue)).toBe(900);
+    expect(Number(timeline.totalFeesInBase)).toBe(15);
+    expect(Number(timeline.totalDividendsInBase)).toBe(25);
+    expect(Number(timeline.totalRealizedPnlInBase)).toBe(71);
+    const totalProfit =
+      Number(timeline.endingMarketValue) +
+      Number(timeline.totalWithdrawalsAndDividendsInBase) -
+      Number(timeline.totalDepositsInBase);
+    expect(totalProfit).toBe(390);
+    expect(
+      Number(timeline.totalRealizedPnlInBase) +
+        (Number(timeline.endingMarketValue) -
+          Number(timeline.endingOpenCostBasis)) +
+        Number(timeline.totalCashDividendsInBase),
+    ).toBe(390);
+    expect(timeline.tradeEvents.map((e) => e.kind)).toEqual(["buy", "sell"]);
+
+    // Sanity check simulation using exact buys/sells into the underlying price curve (no dividends)
+    const ownSim = computeSameCashFlowsSimulation({
+      benchmarkSymbol: "VOO",
+      portfolioSeries: timeline.points.map((p) => ({
+        date: p.date,
+        portfolioValue: p.portfolioValue,
+      })),
+      externalCashFlows: timeline.externalCashFlows,
+      benchmarkPricesByDate: dailyBarsByInstrument.get("inst-1")!,
+      portfolioCashDividendsInBase: timeline.totalCashDividendsInBase,
+    });
+    expect(ownSim).not.toBeNull();
+    expect(Number(ownSim!.portfolioTotalGain)).toBe(390);
+  });
 });

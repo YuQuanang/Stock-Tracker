@@ -1,4 +1,9 @@
-const STATIC_CACHE = "kestrel-static-v1";
+const STATIC_CACHE = "kestrel-static-v2";
+
+function isLocalhostOrigin() {
+  const host = self.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -13,13 +18,18 @@ self.addEventListener("activate", (event) => {
           keys
             .filter(
               (key) =>
-                (key.startsWith("folio-static-") || key.startsWith("kestrel-static-")) &&
-                key !== STATIC_CACHE,
+                (key.startsWith("folio-static-") ||
+                  key.startsWith("kestrel-static-")) &&
+                (isLocalhostOrigin() || key !== STATIC_CACHE),
             )
             .map((key) => caches.delete(key)),
         ),
       )
-      .then(() => self.clients.claim()),
+      .then(() =>
+        isLocalhostOrigin()
+          ? self.registration.unregister()
+          : self.clients.claim(),
+      ),
   );
 });
 
@@ -39,6 +49,10 @@ function isStaticIconAsset(pathname) {
 }
 
 self.addEventListener("fetch", (event) => {
+  if (isLocalhostOrigin()) {
+    return;
+  }
+
   const { request } = event;
   if (request.method !== "GET") {
     return;
@@ -92,4 +106,3 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
-

@@ -896,7 +896,6 @@ export function WatchlistView({
                                         ? formatMoney(
                                             item.unitPrice,
                                             item.currency,
-                                            { maximumFractionDigits: 4 },
                                           )
                                         : "Unavailable"}
                                     </p>
@@ -1197,7 +1196,6 @@ export function WatchlistView({
                                         {formatMoney(
                                           item.unitPrice,
                                           item.currency,
-                                          { maximumFractionDigits: 4 },
                                         )}
                                       </div>
                                       <div

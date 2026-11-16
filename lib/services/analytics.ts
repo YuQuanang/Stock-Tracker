@@ -72,15 +72,18 @@ import {
   resolveQuotesForSymbols,
 } from "@/lib/market-data";
 import {
+  normalizeBenchmarkSymbol,
+  resolveBenchmarkLabel,
+} from "@/lib/benchmarks/summary";
+import {
   backfillMissingTransactionSgdTotals,
   ensureHistoricalUsdSgdRates,
 } from "@/lib/services/fx-sgd";
 import { loadPortfolioFifoSnapshot } from "@/lib/services/holdings";
 import { listPortfolios } from "@/lib/services/ledger";
-import { getBenchmarkDisplayName } from "@/lib/services/watchlist";
 import { formatSymbolForDisplay } from "@/lib/transactions/form-logic";
 
-export const DEFAULT_BENCHMARK_PRESETS = ["^GSPC", "^IXIC", "^DJI", "^STI"] as const;
+export const DEFAULT_BENCHMARK_PRESETS = ["VOO", "ES3.SI", "ONEQ", "DIA"] as const;
 
 export type AllocationDimension =
   | "instrument"
@@ -150,12 +153,12 @@ export interface BenchmarkSeriesData {
   comparisonCurrency: "SGD" | "USD";
   status: "ok" | "unavailable";
   unavailableReason?: string;
-  rebasedSeries: { date: string; value: string }[];
   periodReturns: Record<PeriodReturnKey, string | null>;
   cumulativeReturnPercent: string | null;
   annualizedReturnPercent: string | null;
   annualizedVolatilityPercent: string | null;
   sharpeRatio: string | null;
+  timingEffectPercent: string | null;
   drawdown: {
     points: { date: string; drawdownPercent: string }[];
     maxDrawdownPercent: string | null;
@@ -202,16 +205,34 @@ export interface PortfolioAnalyticsSnapshot {
       netCashInvested: string;
       twrIndex: string | null;
     }[];
+    tradeEvents: {
+      date: string;
+      tradeDate: string;
+      kind: "buy" | "sell";
+      symbol: string;
+      amountInBase: string;
+    }[];
     firstTransactionDate: string | null;
     lastValuationDate: string | null;
+    endingMarketValue: string;
+    endingOpenCostBasis: string;
     totalDepositsInBase: string;
     totalWithdrawalsAndDividendsInBase: string;
+    totalBuysGrossInBase: string;
+    totalSellsGrossInBase: string;
+    totalFeesInBase: string;
+    totalDividendsInBase: string;
+    totalCashDividendsInBase: string;
+    totalRealizedPnlInBase: string;
+    endingUnrealizedPnlInBase: string;
+    totalProfitInBase: string;
     excludedUnpricedSymbols: string[];
   };
   performance: {
     xirrPercent: string | null;
     cumulativeTwrPercent: string | null;
     annualizedTwrPercent: string | null;
+    timingEffectPercent: string | null;
     periodReturns: Record<PeriodReturnKey, string | null>;
     volatilityPercent: string | null;
     sharpeRatio: string | null;
@@ -429,10 +450,10 @@ function toMoverViewRow(row: ValuedHoldingRow): MoverViewRow {
   };
 }
 
-function buildRebasedBenchmarkSeries(params: {
+function sliceAnchoredBenchmarkEntries(params: {
   benchmarkCalendarEntries: [string, DecimalValue][];
   anchorDate: string | null;
-}): { date: string; value: string }[] {
+}): { date: string; value: DecimalValue }[] {
   if (params.benchmarkCalendarEntries.length === 0) {
     return [];
   }
@@ -451,19 +472,12 @@ function buildRebasedBenchmarkSeries(params: {
     anchorIdx = foundIdx >= 0 ? foundIdx : 0;
   }
 
-  const baseClose = params.benchmarkCalendarEntries[anchorIdx][1];
-  if (!baseClose.gt(ZERO)) {
-    return [];
-  }
-
-  const out: { date: string; value: string }[] = [];
+  const out: { date: string; value: DecimalValue }[] = [];
   for (let i = anchorIdx; i < params.benchmarkCalendarEntries.length; i += 1) {
     const [date, close] = params.benchmarkCalendarEntries[i];
-    const rebased = close.div(baseClose).mul(HUNDRED).toDecimalPlaces(4);
-    out.push({
-      date,
-      value: toDecimalString(rebased, 4),
-    });
+    if (close.gt(ZERO)) {
+      out.push({ date, value: close });
+    }
   }
   return out;
 }
@@ -517,16 +531,19 @@ export async function computePortfolioAnalytics(
     ? matchedPortfolio.name
     : "All Portfolios";
 
+  const normalizedDefaultBenchmark = normalizeBenchmarkSymbol(
+    appSettings.defaultBenchmark,
+  );
   const requestedBenchmarks = [
     ...new Set(
       (options.benchmarks?.length
         ? options.benchmarks
         : [
             ...DEFAULT_BENCHMARK_PRESETS,
-            appSettings.defaultBenchmark,
+            normalizedDefaultBenchmark,
           ]
       )
-        .map((s) => s.trim().toUpperCase())
+        .map((s) => normalizeBenchmarkSymbol(s))
         .filter(Boolean),
     ),
   ];
@@ -793,6 +810,7 @@ export async function computePortfolioAnalytics(
               endDate: asOfDate,
               forceRefresh: options.forceRefresh,
               cacheOnly: options.cacheOnly,
+              preferAdjustedClose: true,
               db: database,
               now,
               fetchImpl: options.fetchImpl,
@@ -877,15 +895,24 @@ export async function computePortfolioAnalytics(
       ])
     : fxSyncResult.fxBook;
 
-  // Index the persisted `price_bar` rows loaded above for portfolio instruments & benchmarks
+  // Index persisted `price_bar` rows: unadjusted `close` for holdings valuation,
+  // and dividend-adjusted `adj_close` (falling back to `close`) for benchmarks.
   const dailyBarsByInstrument = new Map<string, Map<string, string>>();
+  const benchmarkBarsByInstrument = new Map<string, Map<string, string>>();
   for (const row of loadedPriceBarRows) {
-    let map = dailyBarsByInstrument.get(row.instrumentId);
-    if (!map) {
-      map = new Map<string, string>();
-      dailyBarsByInstrument.set(row.instrumentId, map);
+    let closeMap = dailyBarsByInstrument.get(row.instrumentId);
+    if (!closeMap) {
+      closeMap = new Map<string, string>();
+      dailyBarsByInstrument.set(row.instrumentId, closeMap);
     }
-    map.set(row.date, row.close);
+    closeMap.set(row.date, row.close);
+
+    let adjMap = benchmarkBarsByInstrument.get(row.instrumentId);
+    if (!adjMap) {
+      adjMap = new Map<string, string>();
+      benchmarkBarsByInstrument.set(row.instrumentId, adjMap);
+    }
+    adjMap.set(row.date, row.adjClose ?? row.close);
   }
 
   // 3. Evaluate current Holdings overview & optional Fundamentals
@@ -919,12 +946,20 @@ export async function computePortfolioAnalytics(
         twrInputs: [],
         xirrCashFlows: [],
         externalCashFlows: [],
+        tradeEvents: [],
         excludedUnpricedSymbols: [],
         firstTransactionDate: null,
         lastValuationDate: null,
-        endingMarketValue: "0",
-        totalDepositsInBase: "0",
-        totalWithdrawalsAndDividendsInBase: "0",
+        endingMarketValue: "0.00",
+        endingOpenCostBasis: "0.00",
+        totalDepositsInBase: "0.00",
+        totalWithdrawalsAndDividendsInBase: "0.00",
+        totalBuysGrossInBase: "0.00",
+        totalSellsGrossInBase: "0.00",
+        totalFeesInBase: "0.00",
+        totalDividendsInBase: "0.00",
+        totalCashDividendsInBase: "0.00",
+        totalRealizedPnlInBase: "0.00",
       }
     : reconstructPortfolioTimeline({
         buckets: scopedTimelineBuckets,
@@ -963,6 +998,11 @@ export async function computePortfolioAnalytics(
   const xirrValue =
     timeline.xirrCashFlows.length >= 2
       ? computeXirr(timeline.xirrCashFlows)
+      : null;
+  const xirrPercentDec = xirrValue ? xirrValue.mul(HUNDRED) : null;
+  const portfolioTimingEffectDec =
+    xirrPercentDec !== null && twrResult.annualizedReturn !== null
+      ? xirrPercentDec.minus(twrResult.annualizedReturn.mul(HUNDRED))
       : null;
 
   const periodReturnsRaw = computeHorizonReturns(activeTwrSeries, asOfDate, {
@@ -1014,10 +1054,10 @@ export async function computePortfolioAnalytics(
     const benchQuote = quotes[benchSym];
 
     const rawBarsMap =
-      barSync?.instrumentId && dailyBarsByInstrument.get(barSync.instrumentId)
-        ? dailyBarsByInstrument.get(barSync.instrumentId)!
-        : instrRecord?.id && dailyBarsByInstrument.get(instrRecord.id)
-          ? dailyBarsByInstrument.get(instrRecord.id)!
+      barSync?.instrumentId && benchmarkBarsByInstrument.get(barSync.instrumentId)
+        ? benchmarkBarsByInstrument.get(barSync.instrumentId)!
+        : instrRecord?.id && benchmarkBarsByInstrument.get(instrRecord.id)
+          ? benchmarkBarsByInstrument.get(instrRecord.id)!
           : new Map<string, string>();
 
     const convertedClosesMap = new Map<string, DecimalValue>();
@@ -1077,19 +1117,19 @@ export async function computePortfolioAnalytics(
       benchmarks[benchSym] = {
         symbol: benchSym,
         displaySymbol: formatSymbolForDisplay(benchSym),
-        name: benchQuote?.name ?? getBenchmarkDisplayName(benchSym),
+        name: resolveBenchmarkLabel(benchSym, benchQuote?.name),
         nativeCurrency,
         comparisonCurrency,
         status: "unavailable",
         unavailableReason:
           barSync?.unavailableReason ??
           "No historical bars available for benchmark.",
-        rebasedSeries: [],
         periodReturns: emptyPeriodReturns(),
         cumulativeReturnPercent: null,
         annualizedReturnPercent: null,
         annualizedVolatilityPercent: null,
         sharpeRatio: null,
+        timingEffectPercent: null,
         drawdown: {
           points: [],
           maxDrawdownPercent: null,
@@ -1107,7 +1147,7 @@ export async function computePortfolioAnalytics(
       continue;
     }
 
-    const rebasedSeries = buildRebasedBenchmarkSeries({
+    const anchoredEntries = sliceAnchoredBenchmarkEntries({
       benchmarkCalendarEntries: sortedBenchEntries,
       anchorDate: twrResult.firstActiveDate,
     });
@@ -1118,14 +1158,14 @@ export async function computePortfolioAnalytics(
     }));
     const benchPeriods = computeHorizonReturns(benchFullSeries, asOfDate);
 
-    // Compute cumulative + CAGR over the aligned rebased span
-    const firstRebased = rebasedSeries[0];
-    const lastRebased = rebasedSeries[rebasedSeries.length - 1];
+    // Compute cumulative + CAGR over the portfolio's active span
+    const firstAnchored = anchoredEntries[0];
+    const lastAnchored = anchoredEntries[anchoredEntries.length - 1];
     const benchCumFraction =
-      firstRebased && lastRebased
+      firstAnchored && lastAnchored
         ? safeDivide(
-            toDecimal(lastRebased.value).minus(toDecimal(firstRebased.value)),
-            toDecimal(firstRebased.value),
+            lastAnchored.value.minus(firstAnchored.value),
+            firstAnchored.value,
           )
         : null;
     if (twrResult.firstActiveDate && benchCumFraction !== null) {
@@ -1133,8 +1173,8 @@ export async function computePortfolioAnalytics(
       benchPeriods.ALL = benchCumFraction.mul(HUNDRED);
     }
     const benchAnnFraction =
-      firstRebased && lastRebased
-        ? computeCagr(benchCumFraction, firstRebased.date, lastRebased.date)
+      firstAnchored && lastAnchored
+        ? computeCagr(benchCumFraction, firstAnchored.date, lastAnchored.date)
         : null;
 
     const benchDailyReturns: { date: string; dailyReturn: DecimalValue }[] = [];
@@ -1163,7 +1203,7 @@ export async function computePortfolioAnalytics(
       riskFreeRateFraction: riskFreeDec,
     });
     const benchDrawdown = computeDrawdownSeries(
-      rebasedSeries.length >= 2 ? rebasedSeries : benchFullSeries,
+      anchoredEntries.length >= 2 ? anchoredEntries : benchFullSeries,
     );
 
     const regression = computeBenchmarkRegression({
@@ -1186,16 +1226,31 @@ export async function computePortfolioAnalytics(
           benchmarkPricesByDate: new Map(
             sortedBenchEntries.map(([d, v]) => [d, toDecimalString(v, 8)]),
           ),
+          portfolioCashDividendsInBase: timeline.totalCashDividendsInBase,
+          portfolioXirrPercent: xirrPercentDec
+            ? toDecimalString(xirrPercentDec, 2)
+            : null,
         });
+
+    const benchmarkTimingEffectPercent =
+      sameCashFlows?.benchmarkXirrPercent !== null &&
+      sameCashFlows?.benchmarkXirrPercent !== undefined &&
+      benchAnnFraction !== null
+        ? toDecimalString(
+            toDecimal(sameCashFlows.benchmarkXirrPercent)
+              .minus(benchAnnFraction.mul(HUNDRED))
+              .toDecimalPlaces(2),
+            2,
+          )
+        : null;
 
     benchmarks[benchSym] = {
       symbol: benchSym,
       displaySymbol: formatSymbolForDisplay(benchSym),
-      name: benchQuote?.name ?? getBenchmarkDisplayName(benchSym),
+      name: resolveBenchmarkLabel(benchSym, benchQuote?.name),
       nativeCurrency,
       comparisonCurrency,
       status: "ok",
-      rebasedSeries,
       periodReturns: formatPeriodReturns(benchPeriods),
       cumulativeReturnPercent: benchCumFraction
         ? toDecimalString(benchCumFraction.mul(HUNDRED), 2)
@@ -1205,6 +1260,7 @@ export async function computePortfolioAnalytics(
         : null,
       annualizedVolatilityPercent: toNullableDecimalString(benchVolPct, 2),
       sharpeRatio: toNullableDecimalString(benchSharpe, 2),
+      timingEffectPercent: benchmarkTimingEffectPercent,
       drawdown: {
         points: benchDrawdown.points.map((pt) => ({
           date: pt.date,
@@ -1488,6 +1544,16 @@ export async function computePortfolioAnalytics(
     });
   }
 
+  const endingMarketValueDec = toDecimal(timeline.endingMarketValue);
+  const endingOpenCostBasisDec = toDecimal(timeline.endingOpenCostBasis);
+  const endingUnrealizedPnlDec = endingMarketValueDec
+    .minus(endingOpenCostBasisDec)
+    .toDecimalPlaces(2);
+  const totalProfitDec = endingMarketValueDec
+    .plus(toDecimal(timeline.totalWithdrawalsAndDividendsInBase))
+    .minus(toDecimal(timeline.totalDepositsInBase))
+    .toDecimalPlaces(2);
+
   return {
     accountHasNoTransactions,
     isEmpty,
@@ -1500,7 +1566,7 @@ export async function computePortfolioAnalytics(
       riskFreeRatePercent: toDecimalString(riskFreeDec.mul(HUNDRED), 2),
       dividendMode: appSettings.dividendMode === "shares" ? "shares" : "cash",
       costBasisMethod: "FIFO",
-      defaultBenchmark: appSettings.defaultBenchmark,
+      defaultBenchmark: normalizedDefaultBenchmark,
     },
     portfolios: holdingsPortfolios,
     settings: appSettings,
@@ -1514,16 +1580,27 @@ export async function computePortfolioAnalytics(
         ...pt,
         twrIndex: twrByDate.get(pt.date) ?? null,
       })),
+      tradeEvents: timeline.tradeEvents,
       firstTransactionDate: timeline.firstTransactionDate,
       lastValuationDate: timeline.lastValuationDate,
+      endingMarketValue: timeline.endingMarketValue,
+      endingOpenCostBasis: timeline.endingOpenCostBasis,
       totalDepositsInBase: timeline.totalDepositsInBase,
       totalWithdrawalsAndDividendsInBase:
         timeline.totalWithdrawalsAndDividendsInBase,
+      totalBuysGrossInBase: timeline.totalBuysGrossInBase,
+      totalSellsGrossInBase: timeline.totalSellsGrossInBase,
+      totalFeesInBase: timeline.totalFeesInBase,
+      totalDividendsInBase: timeline.totalDividendsInBase,
+      totalCashDividendsInBase: timeline.totalCashDividendsInBase,
+      totalRealizedPnlInBase: timeline.totalRealizedPnlInBase,
+      endingUnrealizedPnlInBase: toDecimalString(endingUnrealizedPnlDec, 2),
+      totalProfitInBase: toDecimalString(totalProfitDec, 2),
       excludedUnpricedSymbols: timeline.excludedUnpricedSymbols,
     },
     performance: {
-      xirrPercent: xirrValue
-        ? toDecimalString(xirrValue.mul(HUNDRED), 2)
+      xirrPercent: xirrPercentDec
+        ? toDecimalString(xirrPercentDec, 2)
         : null,
       cumulativeTwrPercent: toNullableDecimalString(
         twrResult.cumulativeReturnPercent,
@@ -1533,6 +1610,7 @@ export async function computePortfolioAnalytics(
         twrResult.annualizedReturnPercent,
         2,
       ),
+      timingEffectPercent: toNullableDecimalString(portfolioTimingEffectDec, 2),
       periodReturns: formatPeriodReturns(periodReturnsRaw),
       volatilityPercent: toNullableDecimalString(volatilityPct, 2),
       sharpeRatio: toNullableDecimalString(sharpeRatio, 2),

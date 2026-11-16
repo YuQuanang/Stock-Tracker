@@ -13,6 +13,7 @@ import {
   toDecimalString,
   ZERO,
 } from "@/lib/finance/decimal";
+import { computeXirr, type XirrCashFlow } from "@/lib/finance/xirr";
 
 const TRADING_DAYS_PER_YEAR = 252;
 
@@ -294,32 +295,36 @@ export interface SameCashFlowsSimulationResult {
   portfolioFinalValue: string;
   portfolioTotalGain: string;
   portfolioTotalGainPercent: string | null;
+  portfolioXirrPercent: string | null;
+  benchmarkDeposited: string;
+  benchmarkWithdrawn: string;
+  benchmarkWasCapped: boolean;
   benchmarkFinalValue: string;
   benchmarkTotalGain: string;
   benchmarkTotalGainPercent: string | null;
+  benchmarkXirrPercent: string | null;
   /** `portfolioTotalGain - benchmarkTotalGain` (positive means portfolio beat benchmark). */
   excessGain: string;
   benchmarkOutperformed: boolean;
 }
 
 /**
- * Simulates investing every portfolio deposit and withdrawal into a benchmark
- * index on the exact same historical dates (with up to 10-day prior trading day
- * lookup on holidays/weekends).
+ * Simulates investing every portfolio buy and sell into a benchmark fund on the
+ * exact same historical dates (with prior trading-day lookback on holidays).
  *
- * Formula in words:
- *   - Deposit `D > 0` on date `t`: buy `D / benchmarkPrice(t)` benchmark units.
- *   - Withdrawal `W > 0` on date `t`: sell `min(heldUnits, W / benchmarkPrice(t))`;
- *     if `heldUnits` runs out (benchmark performed worse than your holdings),
- *     track the uncovered excess withdrawal as negative cash reserve `cashBuffer`
- *     so total profit (`finalNetEquity + totalWithdrawn - totalDeposited`) stays
- *     mathematically apples-to-apples with your actual portfolio profit.
+ * Simulated sells on the fund are capped at the fund holdings available on that
+ * date so neither simulated units nor fund value can ever go negative:
+ *   - Deposit `D > 0` on date `t`: buy `D / benchmarkPrice(t)` fund units.
+ *   - Withdrawal `W > 0` on date `t`: sell `min(heldValue, W)` worth of units.
  */
 export function computeSameCashFlowsSimulation(params: {
   benchmarkSymbol: string;
   portfolioSeries: readonly { date: string; portfolioValue: DecimalInput }[];
   externalCashFlows: readonly ExternalCashFlowEvent[];
   benchmarkPricesByDate: ReadonlyMap<string, DecimalInput>;
+  portfolioCashDividendsInBase?: DecimalInput;
+  portfolioXirrPercent?: string | null;
+  portfolioXirrCashFlows?: readonly XirrCashFlow[];
 }): SameCashFlowsSimulationResult | null {
   const sortedDates = [...params.benchmarkPricesByDate.keys()].sort();
   if (sortedDates.length === 0 || params.portfolioSeries.length === 0) {
@@ -392,41 +397,47 @@ export function computeSameCashFlowsSimulation(params: {
   }
 
   let benchmarkUnits = ZERO;
-  let cashBuffer = ZERO;
+  let benchmarkDeposited = ZERO;
+  let benchmarkWithdrawn = ZERO;
+  let benchmarkWasCapped = false;
   let cumulativeNetContributed = ZERO;
   let lastKnownPortfolioVal = ZERO;
 
   const dailySeries: SameCashFlowsPoint[] = [];
+  const benchmarkXirrFlows: XirrCashFlow[] = [];
+  const defaultPortfolioXirrFlows: XirrCashFlow[] = [];
 
   for (const date of orderedDates) {
     const dep = depositsByDate.get(date) ?? ZERO;
     const wd = withdrawalsByDate.get(date) ?? ZERO;
     const benchPrice = findBenchmarkPrice(date);
 
-    if (benchPrice !== null && benchPrice.gt(ZERO)) {
-      if (dep.gt(ZERO)) {
-        // Apply cashBuffer debt first before buying units, or deposit directly if >= 0.
-        if (cashBuffer.lt(ZERO)) {
-          const offset = DecimalMin(dep, cashBuffer.negated());
-          cashBuffer = cashBuffer.plus(offset);
-          const remainingDep = dep.minus(offset);
-          if (remainingDep.gt(ZERO)) {
-            benchmarkUnits = benchmarkUnits.plus(remainingDep.div(benchPrice));
-          }
-        } else {
-          benchmarkUnits = benchmarkUnits.plus(dep.div(benchPrice));
-        }
+    if (dep.gt(ZERO)) {
+      defaultPortfolioXirrFlows.push({ date, amount: dep.negated() });
+      if (benchPrice !== null && benchPrice.gt(ZERO)) {
+        benchmarkUnits = benchmarkUnits.plus(dep.div(benchPrice));
+        benchmarkDeposited = benchmarkDeposited.plus(dep);
+        benchmarkXirrFlows.push({ date, amount: dep.negated() });
       }
+    }
 
-      if (wd.gt(ZERO)) {
+    if (wd.gt(ZERO)) {
+      defaultPortfolioXirrFlows.push({ date, amount: wd });
+      if (benchPrice !== null && benchPrice.gt(ZERO)) {
         const currentValue = benchmarkUnits.mul(benchPrice);
-        if (currentValue.gte(wd)) {
-          benchmarkUnits = benchmarkUnits.minus(wd.div(benchPrice));
-        } else {
-          // Benchmark equity exhausted by withdrawals matching actual portfolio outflows.
-          const shortfall = wd.minus(currentValue);
-          benchmarkUnits = ZERO;
-          cashBuffer = cashBuffer.minus(shortfall);
+        const actualWd = DecimalMin(wd, currentValue);
+        if (wd.gt(currentValue.plus(QUANTITY_EPSILON))) {
+          benchmarkWasCapped = true;
+        }
+        if (actualWd.gt(ZERO)) {
+          benchmarkUnits = currentValue.gt(actualWd)
+            ? benchmarkUnits.minus(actualWd.div(benchPrice))
+            : ZERO;
+          if (benchmarkUnits.lt(QUANTITY_EPSILON)) {
+            benchmarkUnits = ZERO;
+          }
+          benchmarkWithdrawn = benchmarkWithdrawn.plus(actualWd);
+          benchmarkXirrFlows.push({ date, amount: actualWd });
         }
       }
     }
@@ -439,11 +450,12 @@ export function computeSameCashFlowsSimulation(params: {
     }
 
     if (portfolioValueByDate.has(date) && benchPrice !== null) {
-      const benchEquity = benchmarkUnits.mul(benchPrice).plus(cashBuffer);
+      const benchEquity = benchmarkUnits.mul(benchPrice);
+      const clampedBenchEquity = benchEquity.lt(ZERO) ? ZERO : benchEquity;
       dailySeries.push({
         date,
         portfolioValue: toDecimalString(lastKnownPortfolioVal, 2),
-        benchmarkValue: toDecimalString(benchEquity, 2),
+        benchmarkValue: toDecimalString(clampedBenchEquity, 2),
         netContributed: toDecimalString(cumulativeNetContributed, 2),
       });
     }
@@ -456,23 +468,62 @@ export function computeSameCashFlowsSimulation(params: {
   const lastPoint = dailySeries[dailySeries.length - 1];
   const portfolioFinalValue = toDecimal(lastPoint.portfolioValue);
   const benchmarkFinalValue = toDecimal(lastPoint.benchmarkValue);
-  const netContributed = totalDeposited.minus(totalWithdrawn);
+
+  const portfolioCashDivs =
+    params.portfolioCashDividendsInBase !== undefined
+      ? toDecimal(params.portfolioCashDividendsInBase)
+      : ZERO;
+  const portfolioTotalWithdrawn = totalWithdrawn.plus(portfolioCashDivs);
+  const netContributed = totalDeposited.minus(portfolioTotalWithdrawn);
 
   const portfolioTotalGain = portfolioFinalValue
-    .plus(totalWithdrawn)
+    .plus(portfolioTotalWithdrawn)
     .minus(totalDeposited);
   const benchmarkTotalGain = benchmarkFinalValue
-    .plus(totalWithdrawn)
-    .minus(totalDeposited);
+    .plus(benchmarkWithdrawn)
+    .minus(benchmarkDeposited);
 
   const portfolioTotalGainPercent = totalDeposited.gt(ZERO)
     ? safeDivide(portfolioTotalGain.mul(HUNDRED), totalDeposited)?.toDecimalPlaces(2) ??
       null
     : null;
-  const benchmarkTotalGainPercent = totalDeposited.gt(ZERO)
-    ? safeDivide(benchmarkTotalGain.mul(HUNDRED), totalDeposited)?.toDecimalPlaces(2) ??
-      null
+  const benchmarkTotalGainPercent = benchmarkDeposited.gt(ZERO)
+    ? safeDivide(
+        benchmarkTotalGain.mul(HUNDRED),
+        benchmarkDeposited,
+      )?.toDecimalPlaces(2) ?? null
     : null;
+
+  if (benchmarkFinalValue.gt(QUANTITY_EPSILON)) {
+    benchmarkXirrFlows.push({
+      date: lastPoint.date,
+      amount: benchmarkFinalValue,
+    });
+  }
+  const benchmarkXirrDec =
+    benchmarkXirrFlows.length >= 2 ? computeXirr(benchmarkXirrFlows) : null;
+  const benchmarkXirrPercent = benchmarkXirrDec
+    ? toDecimalString(benchmarkXirrDec.mul(HUNDRED).toDecimalPlaces(2), 2)
+    : null;
+
+  let resolvedPortfolioXirrPercent: string | null = null;
+  if (params.portfolioXirrPercent !== undefined) {
+    resolvedPortfolioXirrPercent = params.portfolioXirrPercent;
+  } else {
+    const flowsForPort = params.portfolioXirrCashFlows
+      ? [...params.portfolioXirrCashFlows]
+      : [
+          ...defaultPortfolioXirrFlows,
+          ...(portfolioFinalValue.gt(QUANTITY_EPSILON)
+            ? [{ date: lastPoint.date, amount: portfolioFinalValue }]
+            : []),
+        ];
+    const portXirrDec =
+      flowsForPort.length >= 2 ? computeXirr(flowsForPort) : null;
+    resolvedPortfolioXirrPercent = portXirrDec
+      ? toDecimalString(portXirrDec.mul(HUNDRED).toDecimalPlaces(2), 2)
+      : null;
+  }
 
   const excessGain = portfolioTotalGain.minus(benchmarkTotalGain);
 
@@ -480,18 +531,23 @@ export function computeSameCashFlowsSimulation(params: {
     benchmarkSymbol: params.benchmarkSymbol,
     dailySeries,
     totalDeposited: toDecimalString(totalDeposited, 2),
-    totalWithdrawn: toDecimalString(totalWithdrawn, 2),
+    totalWithdrawn: toDecimalString(portfolioTotalWithdrawn, 2),
     netContributed: toDecimalString(netContributed, 2),
     portfolioFinalValue: toDecimalString(portfolioFinalValue, 2),
     portfolioTotalGain: toDecimalString(portfolioTotalGain, 2),
     portfolioTotalGainPercent: portfolioTotalGainPercent
       ? toDecimalString(portfolioTotalGainPercent, 2)
       : null,
+    portfolioXirrPercent: resolvedPortfolioXirrPercent,
+    benchmarkDeposited: toDecimalString(benchmarkDeposited, 2),
+    benchmarkWithdrawn: toDecimalString(benchmarkWithdrawn, 2),
+    benchmarkWasCapped,
     benchmarkFinalValue: toDecimalString(benchmarkFinalValue, 2),
     benchmarkTotalGain: toDecimalString(benchmarkTotalGain, 2),
     benchmarkTotalGainPercent: benchmarkTotalGainPercent
       ? toDecimalString(benchmarkTotalGainPercent, 2)
       : null,
+    benchmarkXirrPercent,
     excessGain: toDecimalString(excessGain, 2),
     benchmarkOutperformed: excessGain.gt(ZERO),
   };

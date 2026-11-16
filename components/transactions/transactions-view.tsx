@@ -430,10 +430,10 @@ export function TransactionsView({
                 );
                 const qtyAndPriceText =
                   row.type === "Sell All"
-                    ? `All shares @ ${formatMoney(row.price, row.currency, { maximumFractionDigits: 4 })}`
+                    ? `All shares @ ${formatMoney(row.price, row.currency)}`
                     : row.type === "Dividend"
                       ? `Dividend · ${formatMoney(row.quantity, row.currency)}`
-                      : `${formatQuantity(row.quantity)} sh × ${formatMoney(row.price, row.currency, { maximumFractionDigits: 4 })}`;
+                      : `${formatQuantity(row.quantity)} sh × ${formatMoney(row.price, row.currency)}`;
 
                 return (
                   <div key={row.id} className="px-4 py-3.5">
@@ -583,9 +583,7 @@ export function TransactionsView({
                           </td>
                           <td className="num whitespace-nowrap px-4 py-3 text-right">
                             <div>
-                              {formatMoney(row.price, row.currency, {
-                                maximumFractionDigits: 4,
-                              })}
+                              {formatMoney(row.price, row.currency)}
                             </div>
                             {row.isManualPrice && (
                               <div className="text-[11px] text-accent">

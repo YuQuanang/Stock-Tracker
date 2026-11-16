@@ -21,6 +21,10 @@ import { Card } from "@/components/ui/card";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
 import type { Portfolio, Settings } from "@/db/schema";
+import {
+  PRESET_BENCHMARKS,
+  normalizeBenchmarkSymbol,
+} from "@/lib/benchmarks/summary";
 import { fadeQuick, springSmooth } from "@/lib/motion";
 import {
   GAIN_SCHEME_STORAGE_KEY,
@@ -80,12 +84,7 @@ const GAIN_SCHEME_OPTIONS: readonly SegmentedOption<GainColorScheme>[] = [
   { value: "color-blind-safe", label: "Color-blind safe" },
 ];
 
-const BENCHMARK_PRESETS = [
-  { symbol: "^GSPC", label: "S&P 500" },
-  { symbol: "^IXIC", label: "NASDAQ" },
-  { symbol: "^DJI", label: "Dow Jones" },
-  { symbol: "^STI", label: "Straits Times Index (STI)" },
-];
+const BENCHMARK_PRESETS = PRESET_BENCHMARKS;
 
 function applyDomPreferences(
   theme: ThemePreference,
@@ -120,11 +119,10 @@ export function SettingsView({
   const [riskFreePercentInput, setRiskFreePercentInput] = useState<string>(() =>
     (Number(initialSettings.riskFreeRate) * 100).toFixed(2),
   );
-  const [customBenchmarkInput, setCustomBenchmarkInput] = useState<string>(() =>
-    BENCHMARK_PRESETS.some((b) => b.symbol === initialSettings.defaultBenchmark)
-      ? ""
-      : initialSettings.defaultBenchmark,
-  );
+  const [customBenchmarkInput, setCustomBenchmarkInput] = useState<string>(() => {
+    const normalized = normalizeBenchmarkSymbol(initialSettings.defaultBenchmark);
+    return BENCHMARK_PRESETS.some((b) => b.symbol === normalized) ? "" : normalized;
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -387,9 +385,11 @@ export function SettingsView({
                 id="settings-default-benchmark"
                 value={
                   BENCHMARK_PRESETS.some(
-                    (b) => b.symbol === savedSettings.defaultBenchmark,
+                    (b) =>
+                      b.symbol ===
+                      normalizeBenchmarkSymbol(savedSettings.defaultBenchmark),
                   )
-                    ? savedSettings.defaultBenchmark
+                    ? normalizeBenchmarkSymbol(savedSettings.defaultBenchmark)
                     : "__custom__"
                 }
                 onChange={(e) => {
@@ -411,7 +411,9 @@ export function SettingsView({
               </SettingsSelect>
 
               {(!BENCHMARK_PRESETS.some(
-                (b) => b.symbol === savedSettings.defaultBenchmark,
+                (b) =>
+                  b.symbol ===
+                  normalizeBenchmarkSymbol(savedSettings.defaultBenchmark),
               ) ||
                 customBenchmarkInput !== "") && (
                 <div className="flex items-center gap-1.5">

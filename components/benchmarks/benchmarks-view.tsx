@@ -12,11 +12,9 @@ import {
   X,
 } from "lucide-react";
 import { MetricTooltip } from "@/components/analytics/metric-tooltip";
-import {
-  type BenchmarkChartViewMode,
-  BenchmarkComparisonChart,
-} from "@/components/charts/benchmark-comparison-chart";
+import { BenchmarkComparisonChart } from "@/components/charts/benchmark-comparison-chart";
 import { DrawdownChart } from "@/components/charts/drawdown-chart";
+import { MoneyInvestedChart } from "@/components/charts/money-invested-chart";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,12 +23,14 @@ import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmente
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   computeReturnSpread,
+  DEFAULT_FOCUS_BENCHMARK,
+  normalizeBenchmarkSymbol,
   PRESET_BENCHMARKS,
   resolveBenchmarkLabel,
 } from "@/lib/benchmarks/summary";
-import { SERIES_PALETTE } from "@/lib/charts/theme";
+import { type AnalyticsChartRange, SERIES_PALETTE } from "@/lib/charts/theme";
 import type { PeriodReturnKey } from "@/lib/finance";
-import { formatPercent } from "@/lib/format";
+import { formatMoney, formatPercent } from "@/lib/format";
 import type { SymbolSearchMatch } from "@/lib/market-data/search";
 import { fadeQuick } from "@/lib/motion";
 import type {
@@ -46,7 +46,7 @@ interface BenchmarksViewProps {
   hydrateLiveOnMount?: boolean;
 }
 
-type ViewTab = BenchmarkChartViewMode | "period-table";
+type ViewTab = "same-cash-flows" | "period-table";
 
 const CURRENCY_OPTIONS: readonly SegmentedOption<"SGD" | "USD">[] = [
   { value: "SGD", label: "SGD" },
@@ -54,7 +54,6 @@ const CURRENCY_OPTIONS: readonly SegmentedOption<"SGD" | "USD">[] = [
 ];
 
 const VIEW_TAB_OPTIONS: readonly SegmentedOption<ViewTab>[] = [
-  { value: "rebased", label: "Rebased to 100" },
   { value: "same-cash-flows", label: "Same cash flows" },
   { value: "period-table", label: "Period returns" },
 ];
@@ -94,22 +93,25 @@ export function BenchmarksView({
     initialSnapshot.scope.currency,
   );
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(() => {
-    const def = initialSnapshot.scope.defaultBenchmark.toUpperCase();
-    const initial = ["^GSPC", "^STI", "^IXIC"];
+    const def = normalizeBenchmarkSymbol(initialSnapshot.scope.defaultBenchmark);
+    const initial = PRESET_BENCHMARKS.map((p) => p.symbol);
     if (!initial.includes(def)) {
       initial.unshift(def);
     }
     return initial;
   });
   const [customSymbols, setCustomSymbols] = useState<string[]>(() => {
-    const def = initialSnapshot.scope.defaultBenchmark.toUpperCase();
+    const def = normalizeBenchmarkSymbol(initialSnapshot.scope.defaultBenchmark);
     const presetSet = new Set(PRESET_BENCHMARKS.map((p) => p.symbol));
     return presetSet.has(def) ? [] : [def];
   });
   const [primarySymbol, setPrimarySymbol] = useState<string>(
-    initialSnapshot.scope.defaultBenchmark.toUpperCase() || "^GSPC",
+    normalizeBenchmarkSymbol(initialSnapshot.scope.defaultBenchmark) ||
+      DEFAULT_FOCUS_BENCHMARK,
   );
-  const [viewTab, setViewTab] = useState<ViewTab>("rebased");
+  const [viewTab, setViewTab] = useState<ViewTab>("same-cash-flows");
+  const [cashFlowChartRange, setCashFlowChartRange] =
+    useState<AnalyticsChartRange>("MAX");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const requestSeqRef = useRef(0);
@@ -347,7 +349,7 @@ export function BenchmarksView({
     const nextCustoms = customSymbols.filter((s) => s !== symbol);
     const nextSelected = selectedSymbols.filter((s) => s !== symbol);
     if (nextSelected.length === 0) {
-      nextSelected.push("^GSPC");
+      nextSelected.push(DEFAULT_FOCUS_BENCHMARK);
     }
     setCustomSymbols(nextCustoms);
     setSelectedSymbols(nextSelected);
@@ -599,8 +601,253 @@ export function BenchmarksView({
           </Card>
         </div>
 
+        {/* Profit Summary (Dollars + XIRR) & Timing Effect */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <Card className="space-y-4 p-5 lg:col-span-7">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                  Profit Summary ({currency})
+                </h2>
+                <p className="mt-0.5 text-[12px] text-ink-3">
+                  Profit = current market value + money taken out (sells &amp;
+                  dividends) − money put in (buys &amp; fees)
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
+                  XIRR (annualized)
+                </p>
+                <div className="mt-0.5">
+                  <GainBadge
+                    amount={snapshot.timeline.totalProfitInBase}
+                    currency={currency}
+                    percent={performance.xirrPercent}
+                    size="md"
+                    pill
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <dl className="space-y-2 rounded-[12px] border border-line bg-surface-2 p-3.5 text-[13px]">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">Current market value</dt>
+                  <dd className="num font-medium text-ink">
+                    {formatMoney(snapshot.timeline.endingMarketValue, currency)}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">
+                    + Money taken out{" "}
+                    <span className="text-[11px] text-ink-3">
+                      (sells &amp; divs)
+                    </span>
+                  </dt>
+                  <dd className="num font-medium text-ink">
+                    {formatMoney(
+                      snapshot.timeline.totalWithdrawalsAndDividendsInBase,
+                      currency,
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">
+                    − Money put in{" "}
+                    <span className="text-[11px] text-ink-3">
+                      (buys &amp; fees)
+                    </span>
+                  </dt>
+                  <dd className="num font-medium text-ink">
+                    {formatMoney(snapshot.timeline.totalDepositsInBase, currency)}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-line pt-2">
+                  <dt className="font-semibold text-ink">= Dollar profit</dt>
+                  <dd>
+                    <GainBadge
+                      amount={snapshot.timeline.totalProfitInBase}
+                      currency={currency}
+                      size="sm"
+                    />
+                  </dd>
+                </div>
+              </dl>
+
+              <dl className="space-y-2 rounded-[12px] border border-line bg-surface-2 p-3.5 text-[13px]">
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">Realized profit</dt>
+                  <dd>
+                    <GainBadge
+                      amount={snapshot.timeline.totalRealizedPnlInBase}
+                      currency={currency}
+                      size="sm"
+                    />
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">Unrealized profit</dt>
+                  <dd>
+                    <GainBadge
+                      amount={snapshot.timeline.endingUnrealizedPnlInBase}
+                      currency={currency}
+                      size="sm"
+                    />
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <dt className="text-ink-2">Dividends</dt>
+                  <dd className="num font-medium text-ink">
+                    {formatMoney(snapshot.timeline.totalDividendsInBase, currency)}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-line pt-2">
+                  <dt className="text-ink-2">
+                    Fees paid{" "}
+                    <span className="text-[11px] text-ink-3">
+                      (included above)
+                    </span>
+                  </dt>
+                  <dd className="num font-medium text-ink">
+                    {formatMoney(snapshot.timeline.totalFeesInBase, currency)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            {snapshot.timeline.excludedUnpricedSymbols.length > 0 && (
+              <p className="text-[11.5px] text-ink-3">
+                Excludes unpriced symbols (
+                <span className="font-mono">
+                  {snapshot.timeline.excludedUnpricedSymbols.join(", ")}
+                </span>
+                ) so dollar profit reconciles directly with your benchmarked
+                portfolio cash flows.
+              </p>
+            )}
+          </Card>
+
+          <Card className="flex flex-col justify-between space-y-4 p-5 lg:col-span-5">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                    Timing Effect
+                  </h2>
+                  <MetricTooltip
+                    variant="help"
+                    label="Timing Effect (XIRR − TWR)"
+                    explanation="Timing effect = your annualized XIRR minus your annualized TWR over the same period. TWR treats every day equally regardless of portfolio size, whereas XIRR weights each period by how much money you had invested. Comparing yours against the focus fund's same-cash-flows simulation shows whether the gap came from your trade timing or simply depositing gradually over time."
+                  />
+                </div>
+                <span className="text-[12px] text-ink-3">
+                  Ann. XIRR − Ann. TWR
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-baseline gap-2.5">
+                {performance.timingEffectPercent !== null ? (
+                  <span
+                    className={`num text-[24px] font-semibold tracking-tight ${
+                      Number(performance.timingEffectPercent) > 0
+                        ? "text-gain"
+                        : Number(performance.timingEffectPercent) < 0
+                          ? "text-loss"
+                          : "text-ink"
+                    }`}
+                  >
+                    {formatPercent(performance.timingEffectPercent, {
+                      signed: true,
+                    }).replace("%", " pp")}
+                  </span>
+                ) : (
+                  <span className="text-[22px] font-semibold text-ink-2">—</span>
+                )}
+                {performance.xirrPercent && performance.annualizedTwrPercent && (
+                  <span className="num text-[12px] text-ink-2">
+                    ({formatPercent(performance.xirrPercent, { signed: true })} −{" "}
+                    {formatPercent(performance.annualizedTwrPercent, {
+                      signed: true,
+                    })}
+                    )
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[12.5px] text-ink-2">
+                {performance.timingEffectPercent === null
+                  ? "Need at least one closed cash-flow cycle to measure timing effect."
+                  : Number(performance.timingEffectPercent) < 0
+                    ? "Negative: more money was invested before weaker periods, so timing hurt."
+                    : Number(performance.timingEffectPercent) > 0
+                      ? "Positive: more money was invested before stronger periods, so timing helped."
+                      : "Neutral: deposit timing matched time-weighted returns."}
+              </p>
+            </div>
+
+            {primaryBenchmark && (
+              <div className="space-y-1.5 rounded-[12px] border border-line bg-surface-2 p-3.5 text-[12.5px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-ink">
+                    {primaryBenchmark.displaySymbol} same-cash-flows timing
+                    effect
+                  </span>
+                  <span
+                    className={`num font-semibold ${
+                      primaryBenchmark.timingEffectPercent === null
+                        ? "text-ink-2"
+                        : Number(primaryBenchmark.timingEffectPercent) > 0
+                          ? "text-gain"
+                          : Number(primaryBenchmark.timingEffectPercent) < 0
+                            ? "text-loss"
+                            : "text-ink"
+                    }`}
+                  >
+                    {primaryBenchmark.timingEffectPercent !== null
+                      ? `${formatPercent(primaryBenchmark.timingEffectPercent, {
+                          signed: true,
+                        }).replace("%", " pp")}`
+                      : "—"}
+                  </span>
+                </div>
+                <p className="num text-[11.5px] text-ink-3">
+                  Fund sim. XIRR{" "}
+                  {primaryBenchmark.sameCashFlows?.benchmarkXirrPercent !== null &&
+                  primaryBenchmark.sameCashFlows?.benchmarkXirrPercent !== undefined
+                    ? formatPercent(
+                        primaryBenchmark.sameCashFlows.benchmarkXirrPercent,
+                        { signed: true },
+                      )
+                    : "—"}{" "}
+                  vs fund ann. return{" "}
+                  {primaryBenchmark.annualizedReturnPercent !== null
+                    ? formatPercent(primaryBenchmark.annualizedReturnPercent, {
+                        signed: true,
+                      })
+                    : "—"}
+                </p>
+              </div>
+            )}
+          </Card>
+        </div>
+
         {/* Benchmark Selector Buttons + Custom Search */}
         <Card className="p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-[8px] border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink">
+              Total return, dividends reinvested, {currency}
+            </span>
+            <MetricTooltip
+              variant="help"
+              label="Total Return Methodology"
+              explanation={`Benchmarks use dividend-adjusted closes converted daily into ${currency} (total return, dividends reinvested, ${currency}). US fund dividends are assumed to be received without withholding tax.`}
+            />
+          </div>
+          <p className="text-[11.5px] text-ink-3">
+            US fund dividends assumed received without withholding tax.
+          </p>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {PRESET_BENCHMARKS.map((preset) => {
@@ -710,7 +957,7 @@ export function BenchmarksView({
                   handleAddCustomBenchmark(topMatch);
                 }
               }}
-              placeholder="Add ETF or ticker (SPY, ES3.SI)…"
+              placeholder="Add ETF or ticker (SPY, VWRA.L)…"
               aria-label="Add custom benchmark ticker"
               className="field-input h-9.5 pl-9 pr-3 text-[13px]"
             />
@@ -760,7 +1007,7 @@ export function BenchmarksView({
         </div>
       </Card>
 
-      {/* Main Comparison Card: Rebased to 100 / Same Cash Flows / Period Returns */}
+      {/* Main Comparison Card: Same Cash Flows / Period Returns */}
       <Card className="p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SegmentedControl
@@ -774,7 +1021,7 @@ export function BenchmarksView({
           {activeBenchmarkObjects.length > 0 && (
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[12.5px]">
               <label htmlFor="primary-benchmark-select" className="text-ink-2">
-                Focus index:
+                Focus fund:
               </label>
               <div className="relative inline-flex min-w-0 max-w-full items-center">
                 <select
@@ -807,124 +1054,139 @@ export function BenchmarksView({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -2 }}
               transition={fadeQuick}
-              className="overflow-x-auto rounded-[12px] border border-line bg-surface-2"
+              className="space-y-3"
             >
-              <table className="w-full border-collapse text-left text-[13px]">
-                <thead>
-                  <tr className="border-b border-line whitespace-nowrap text-[12px] font-medium text-ink-2">
-                    <th className="py-2.5 pl-4 pr-2">Series ({currency})</th>
-                    <th className="px-1 py-2.5 text-right xl:px-1.5">Ann. TWR</th>
-                    {PERIOD_COLUMNS.map((col, idx) => (
-                      <th
-                        key={col}
-                        title={
-                          col === "ALL"
-                            ? "Cumulative return aligned to your portfolio start date"
-                            : undefined
-                        }
-                        className={
-                          idx === PERIOD_COLUMNS.length - 1
-                            ? "py-2.5 pl-1 pr-4 text-right xl:pl-1.5"
-                            : "px-1 py-2.5 text-right xl:px-1.5"
-                        }
-                      >
-                        {col}
+              <div className="overflow-x-auto rounded-[12px] border border-line bg-surface-2">
+                <table className="w-full border-collapse text-left text-[13px]">
+                  <thead>
+                    <tr className="border-b border-line whitespace-nowrap text-[12px] font-medium text-ink-2">
+                      <th className="py-2.5 pl-4 pr-2">
+                        Series ({currency}, total return)
                       </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  <tr className="bg-accent/8">
-                    <td className="whitespace-nowrap py-3 pl-4 pr-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent"
-                          aria-hidden="true"
-                        />
-                        <span className="font-semibold text-ink">
-                          Your Portfolio
-                        </span>
-                        <span className="font-mono text-[11px] text-ink-3">
-                          TWR
-                        </span>
-                      </div>
-                    </td>
-                    <td className={periodMetricCellClass(false)}>
-                      <GainBadge percent={performance.annualizedTwrPercent} size="xs" />
-                    </td>
-                    {PERIOD_COLUMNS.map((col, idx) => {
-                      const val = performance.periodReturns[col];
-                      return (
-                        <td
+                      <th className="px-1 py-2.5 text-right xl:px-1.5">
+                        Ann. TWR
+                      </th>
+                      {PERIOD_COLUMNS.map((col, idx) => (
+                        <th
                           key={col}
-                          className={periodMetricCellClass(
-                            idx === PERIOD_COLUMNS.length - 1,
-                          )}
+                          title={
+                            col === "ALL"
+                              ? "Cumulative return aligned to your portfolio start date"
+                              : undefined
+                          }
+                          className={
+                            idx === PERIOD_COLUMNS.length - 1
+                              ? "py-2.5 pl-1 pr-4 text-right xl:pl-1.5"
+                              : "px-1 py-2.5 text-right xl:px-1.5"
+                          }
                         >
-                          {val !== null ? (
-                            <GainBadge percent={val} size="xs" />
-                          ) : (
-                            <span className="text-[11.5px] text-ink-3">—</span>
-                          )}
-                        </td>
+                          {col}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    <tr className="bg-accent/8">
+                      <td className="whitespace-nowrap py-3 pl-4 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent"
+                            aria-hidden="true"
+                          />
+                          <span className="font-semibold text-ink">
+                            Your Portfolio
+                          </span>
+                          <span className="font-mono text-[11px] text-ink-3">
+                            TWR
+                          </span>
+                        </div>
+                      </td>
+                      <td className={periodMetricCellClass(false)}>
+                        <GainBadge percent={performance.annualizedTwrPercent} size="xs" />
+                      </td>
+                      {PERIOD_COLUMNS.map((col, idx) => {
+                        const val = performance.periodReturns[col];
+                        return (
+                          <td
+                            key={col}
+                            className={periodMetricCellClass(
+                              idx === PERIOD_COLUMNS.length - 1,
+                            )}
+                          >
+                            {val !== null ? (
+                              <GainBadge percent={val} size="xs" />
+                            ) : (
+                              <span className="text-[11.5px] text-ink-3">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+
+                    {activeBenchmarkObjects.map((bench, index) => {
+                      const color =
+                        SERIES_PALETTE[(index + 1) % (SERIES_PALETTE.length - 1)];
+                      return (
+                        <tr
+                          key={bench.symbol}
+                          className="transition-colors hover:bg-surface"
+                          title={`total return, dividends reinvested, ${currency}`}
+                        >
+                          <td className="max-w-[185px] whitespace-nowrap py-3 pl-4 pr-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span
+                                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: color }}
+                                aria-hidden="true"
+                              />
+                              <span className="truncate font-medium text-ink">
+                                {resolveBenchmarkLabel(bench.symbol, bench.name)}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] text-ink-3">
+                                {bench.displaySymbol}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={periodMetricCellClass(false)}>
+                            <GainBadge
+                              percent={
+                                bench.status === "ok"
+                                  ? bench.annualizedReturnPercent
+                                  : null
+                              }
+                              size="xs"
+                            />
+                          </td>
+                          {PERIOD_COLUMNS.map((col, idx) => {
+                            const val = bench.periodReturns[col];
+                            return (
+                              <td
+                                key={col}
+                                className={periodMetricCellClass(
+                                  idx === PERIOD_COLUMNS.length - 1,
+                                )}
+                              >
+                                {val !== null ? (
+                                  <GainBadge percent={val} size="xs" />
+                                ) : (
+                                  <span className="text-[11.5px] text-ink-3">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
                       );
                     })}
-                  </tr>
-                  {activeBenchmarkObjects.map((bench, index) => {
-                    const color =
-                      SERIES_PALETTE[(index + 1) % (SERIES_PALETTE.length - 1)];
-                    return (
-                      <tr
-                        key={bench.symbol}
-                        className="transition-colors hover:bg-surface"
-                      >
-                        <td className="max-w-[175px] whitespace-nowrap py-3 pl-4 pr-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span
-                              className="h-2.5 w-2.5 shrink-0 rounded-full"
-                              style={{ backgroundColor: color }}
-                              aria-hidden="true"
-                            />
-                            <span className="truncate font-medium text-ink">
-                              {resolveBenchmarkLabel(bench.symbol, bench.name)}
-                            </span>
-                            <span className="shrink-0 font-mono text-[11px] text-ink-3">
-                              {bench.displaySymbol}
-                            </span>
-                          </div>
-                        </td>
-                        <td className={periodMetricCellClass(false)}>
-                          <GainBadge
-                            percent={
-                              bench.status === "ok"
-                                ? bench.annualizedReturnPercent
-                                : null
-                            }
-                            size="xs"
-                          />
-                        </td>
-                        {PERIOD_COLUMNS.map((col, idx) => {
-                          const val = bench.periodReturns[col];
-                          return (
-                            <td
-                              key={col}
-                              className={periodMetricCellClass(
-                                idx === PERIOD_COLUMNS.length - 1,
-                              )}
-                            >
-                              {val !== null ? (
-                                <GainBadge percent={val} size="xs" />
-                              ) : (
-                                <span className="text-[11.5px] text-ink-3">—</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-[12px] text-ink-3">
+                Note: Period returns compound multiplicatively over time and
+                cannot be added together. All benchmark funds reflect total
+                return (dividends reinvested, {currency}); US fund dividends are
+                assumed received without withholding tax.
+              </p>
             </motion.div>
           ) : (
             <motion.div
@@ -933,13 +1195,20 @@ export function BenchmarksView({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -2 }}
               transition={fadeQuick}
+              className="space-y-4"
             >
               <BenchmarkComparisonChart
-                mode={viewTab}
                 currency={currency}
-                portfolioSeries={snapshot.timeline.points}
                 selectedBenchmarks={activeBenchmarkObjects}
                 primaryBenchmark={primaryBenchmark}
+                range={cashFlowChartRange}
+                onRangeChange={setCashFlowChartRange}
+              />
+              <MoneyInvestedChart
+                points={snapshot.timeline.points}
+                tradeEvents={snapshot.timeline.tradeEvents}
+                currency={currency}
+                range={cashFlowChartRange}
               />
             </motion.div>
           )}

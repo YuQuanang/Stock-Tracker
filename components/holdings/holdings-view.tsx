@@ -920,7 +920,6 @@ export function HoldingsView({
                               {formatMoney(
                                 row.averageCostPerShare,
                                 row.currency,
-                                { maximumFractionDigits: 4 },
                               )}
                             </div>
                           </>
@@ -941,9 +940,7 @@ export function HoldingsView({
                         {row.unitPrice ? (
                           <FlashText value={Number(row.unitPrice)}>
                             <div className="font-medium text-ink">
-                              {formatMoney(row.unitPrice, row.currency, {
-                                maximumFractionDigits: 4,
-                              })}
+                              {formatMoney(row.unitPrice, row.currency)}
                             </div>
                             <div
                               title={row.freshnessLabel}
@@ -1228,9 +1225,7 @@ export function HoldingsView({
 
                     <p className="num mt-1 text-[12px] text-ink-2">
                       {formatQuantity(row.sharesHeld)} sh · Avg{" "}
-                      {formatMoney(row.averageCostPerShare, row.currency, {
-                        maximumFractionDigits: 4,
-                      })}{" "}
+                      {formatMoney(row.averageCostPerShare, row.currency)}{" "}
                       · Cost basis{" "}
                       {formatMoney(row.costBasis, row.currency)}
                     </p>

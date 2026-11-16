@@ -1,11 +1,12 @@
 /**
  * Human-friendly number, currency, and signed-gain formatters.
  *
- * Uses `Intl.NumberFormat` while respecting high-precision trade prices and
- * fractional share counts (e.g. `0.919` SGD on SGX ETFs or fractional shares).
+ * Uses `Intl.NumberFormat` while capping displayed price and monetary values
+ * at a maximum of 2 decimal places (`formatQuantity` retains up to 6 decimals
+ * for fractional shares).
  */
 
-/** Formats a monetary value such as `S$1,234.56` or `US$50.58`. */
+/** Formats a monetary value such as `S$1,234.56` or `US$50.58` (max 2 d.p.). */
 export function formatMoney(
   value: string | number | null | undefined,
   currency: string = "USD",
@@ -26,15 +27,17 @@ export function formatMoney(
 
   const locale = options.locale ?? "en-SG";
   const absValue = Math.abs(numeric);
-  const maxFraction =
-    options.maximumFractionDigits ??
-    (absValue > 0 && absValue < 1 ? 4 : 2);
+  const maxFraction = Math.min(
+    2,
+    Math.max(0, options.maximumFractionDigits ?? 2),
+  );
+  const minFraction = Math.min(2, maxFraction);
 
   const formatted = new Intl.NumberFormat(locale, {
     style: "currency",
     currency: currency.toUpperCase(),
-    minimumFractionDigits: 2,
-    maximumFractionDigits: Math.max(2, maxFraction),
+    minimumFractionDigits: minFraction,
+    maximumFractionDigits: maxFraction,
   }).format(absValue);
 
   if (options.signed) {

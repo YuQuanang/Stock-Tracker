@@ -17,6 +17,11 @@ import {
   portfolioInstrument,
 } from "@/db/schema";
 import {
+  DEFAULT_FOCUS_BENCHMARK,
+  normalizeBenchmarkSymbol,
+  resolveBenchmarkLabel,
+} from "@/lib/benchmarks/summary";
+import {
   isStrictlyPositive,
   safeDivide,
   toDecimal,
@@ -75,6 +80,10 @@ export interface PaperSimulationPreview {
 }
 
 const BENCHMARK_LABELS: Record<string, string> = {
+  VOO: "S&P 500",
+  "ES3.SI": "STI",
+  ONEQ: "NASDAQ Composite",
+  DIA: "Dow Jones",
   "^GSPC": "S&P 500",
   "^STI": "STI",
   "^IXIC": "NASDAQ",
@@ -84,7 +93,7 @@ const BENCHMARK_LABELS: Record<string, string> = {
 
 export function getBenchmarkDisplayName(symbol: string): string {
   const upper = symbol.trim().toUpperCase();
-  return BENCHMARK_LABELS[upper] ?? upper;
+  return BENCHMARK_LABELS[upper] ?? resolveBenchmarkLabel(upper);
 }
 
 function getSgtTodayIso(now: Date): string {
@@ -428,7 +437,9 @@ export async function getWatchlistPageSnapshot(options?: {
     ]);
 
   const baseCurrency = appSettings.baseCurrency === "USD" ? "USD" : "SGD";
-  const defaultBenchmark = appSettings.defaultBenchmark || "^GSPC";
+  const defaultBenchmark = normalizeBenchmarkSymbol(
+    appSettings.defaultBenchmark || DEFAULT_FOCUS_BENCHMARK,
+  );
 
   const uniqueNonCryptoSymbols = [
     ...new Set(
@@ -632,7 +643,7 @@ export async function addWatchlistItem(
     database,
     input.portfolioId,
     targetInstrument.id,
-    appSettings.defaultBenchmark || "^GSPC",
+    normalizeBenchmarkSymbol(appSettings.defaultBenchmark || DEFAULT_FOCUS_BENCHMARK),
     now,
     options?.fetchImpl,
   );
@@ -821,7 +832,7 @@ export async function updateWatchlistItem(
     database,
     input.portfolioId,
     input.instrumentId,
-    appSettings.defaultBenchmark || "^GSPC",
+    normalizeBenchmarkSymbol(appSettings.defaultBenchmark || DEFAULT_FOCUS_BENCHMARK),
     now,
     options?.fetchImpl,
   );
@@ -943,11 +954,15 @@ export async function previewPaperSimulation(
   let benchmarkSymbol = input.benchmarkSymbol?.trim().toUpperCase();
   if (!benchmarkSymbol && options?.db) {
     const appSettings = await getOrCreateSettings(options.db);
-    benchmarkSymbol = appSettings.defaultBenchmark || "^GSPC";
+    benchmarkSymbol = normalizeBenchmarkSymbol(
+      appSettings.defaultBenchmark || DEFAULT_FOCUS_BENCHMARK,
+    );
   } else if (!benchmarkSymbol) {
     const database = await getDb();
     const appSettings = await getOrCreateSettings(database);
-    benchmarkSymbol = appSettings.defaultBenchmark || "^GSPC";
+    benchmarkSymbol = normalizeBenchmarkSymbol(
+      appSettings.defaultBenchmark || DEFAULT_FOCUS_BENCHMARK,
+    );
   }
 
   const [assetEntry, assetCurrent, benchmarkEntry, benchmarkCurrent] =

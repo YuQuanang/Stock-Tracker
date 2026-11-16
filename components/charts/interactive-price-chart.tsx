@@ -270,9 +270,7 @@ export function InteractivePriceChart({
       if (!barDate) {
         continue;
       }
-      const priceText = formatMoney(tx.price, currency, {
-        maximumFractionDigits: 4,
-      });
+      const priceText = formatMoney(tx.price, currency);
 
       if (tx.type === "Buy") {
         events.push({
@@ -368,6 +366,7 @@ export function InteractivePriceChart({
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
     const tradeMarkers = new TradeMarkersPrimitive(
       buildMarkerPalette(palette),
@@ -528,9 +527,7 @@ export function InteractivePriceChart({
             <>
               <div className="flex h-6 items-center gap-2">
                 <span className="num text-[17px] leading-6 font-semibold tracking-tight text-ink">
-                  {formatMoney(scrubPoint.price, currency, {
-                    maximumFractionDigits: 4,
-                  })}
+                  {formatMoney(scrubPoint.price, currency)}
                 </span>
                 {scrubPoint.trades.length > 0 && (
                   <span className="truncate rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[12px] leading-4 font-medium text-ink">

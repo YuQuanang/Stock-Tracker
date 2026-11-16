@@ -336,6 +336,15 @@ describe("Milestone 6: Watchlist Service, Valuation, Paper Simulator & Alerts", 
     // Stubbed Yahoo Finance historical + latest preview and DB persistence
     const simFetch: typeof fetch = async (input) => {
       const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("VOO")) {
+        return makeYahooChartResponse({
+          symbol: "VOO",
+          currency: "USD",
+          latestPrice: 500,
+          latestTimestampSec: 1793998800,
+          historicalBars: [{ dateIso: "2025-11-05", close: 400 }],
+        });
+      }
       if (url.includes("%5EGSPC") || url.includes("^GSPC")) {
         return makeYahooChartResponse({
           symbol: "^GSPC",

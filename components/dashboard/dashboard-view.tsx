@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { MetricTooltip } from "@/components/analytics/metric-tooltip";
 import { AllocationDonut } from "@/components/charts/allocation-donut";
+import { MoneyInvestedChart } from "@/components/charts/money-invested-chart";
 import { PortfolioValueChart } from "@/components/charts/portfolio-value-chart";
 import { Sparkline } from "@/components/charts/sparkline";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ import {
   CORE_COMPARISON_BENCHMARKS,
   computeReturnSpread,
 } from "@/lib/benchmarks/summary";
+import type { AnalyticsChartRange } from "@/lib/charts/theme";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { fadeQuick, springSmooth } from "@/lib/motion";
 import { formatSymbolForDisplay } from "@/lib/transactions/form-logic";
@@ -279,6 +281,8 @@ export function DashboardView({
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [isQualityExpanded, setIsQualityExpanded] = useState(false);
   const [isAllocationExpanded, setIsAllocationExpanded] = useState(false);
+  const [valueChartRange, setValueChartRange] =
+    useState<AnalyticsChartRange>("1Y");
   const requestSeqRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const didHydrateLiveRef = useRef(false);
@@ -844,7 +848,17 @@ export function DashboardView({
               points={snapshot.timeline.points}
               currency={currency}
               excludedUnpricedSymbols={snapshot.timeline.excludedUnpricedSymbols}
+              range={valueChartRange}
+              onRangeChange={setValueChartRange}
             />
+            <div className="mt-4">
+              <MoneyInvestedChart
+                points={snapshot.timeline.points}
+                tradeEvents={snapshot.timeline.tradeEvents}
+                currency={currency}
+                range={valueChartRange}
+              />
+            </div>
           </Card>
 
           <Card className="flex h-full flex-col p-4 sm:p-5">
@@ -880,13 +894,13 @@ export function DashboardView({
                   Benchmark Comparison
                 </h2>
                 <p className="mt-0.5 text-[14px] text-ink-2">
-                  Annualized &amp; Cumulative TWR compared against S&amp;P 500,
-                  STI &amp; NASDAQ in {currency}.
+                  Total return (dividends reinvested, {currency}) compared
+                  against VOO (S&amp;P 500), ES3.SI (STI) &amp; ONEQ (NASDAQ).
                 </p>
               </div>
             </div>
             <span className="rounded-[8px] border border-line bg-surface-2 px-2.5 py-1 text-[12px] font-medium text-ink-2">
-              TWR · {currency}
+              Total return · {currency}
             </span>
           </div>
 

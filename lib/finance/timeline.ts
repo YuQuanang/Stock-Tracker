@@ -54,20 +54,45 @@ export interface TimelinePoint {
   netCashInvested: string;
 }
 
+export interface TimelineTradeEvent {
+  /** Trading-calendar bar date (`YYYY-MM-DD`) so chart markers snap cleanly to the line. */
+  date: string;
+  /** Actual local trade date (`YYYY-MM-DD`, differs only for weekend trades). */
+  tradeDate: string;
+  kind: "buy" | "sell";
+  symbol: string;
+  amountInBase: string;
+}
+
 export interface PortfolioTimelineResult {
   points: TimelinePoint[];
   twrInputs: TwrDailyInput[];
   xirrCashFlows: XirrCashFlow[];
   externalCashFlows: ExternalCashFlowEvent[];
+  tradeEvents: TimelineTradeEvent[];
   excludedUnpricedSymbols: string[];
   firstTransactionDate: string | null;
   lastValuationDate: string | null;
   /** Ending mark-to-market value across priced holdings on `asOfDate`. */
   endingMarketValue: string;
-  /** Total cash cost put into buys (across priced holdings). */
+  /** FIFO open cost basis across remaining priced holdings on `asOfDate`. */
+  endingOpenCostBasis: string;
+  /** Total cash cost put into buys including buy fees (across priced holdings). */
   totalDepositsInBase: string;
-  /** Total cash proceeds + cash dividends returned (across priced holdings). */
+  /** Total cash proceeds net of sell fees + cash dividends returned (across priced holdings). */
   totalWithdrawalsAndDividendsInBase: string;
+  /** Total gross buy consideration before buy fees (across priced holdings). */
+  totalBuysGrossInBase: string;
+  /** Total gross sell proceeds before sell fees (across priced holdings). */
+  totalSellsGrossInBase: string;
+  /** Total commissions/fees across all priced buys and sells (`buyFees + sellFees`). */
+  totalFeesInBase: string;
+  /** Total net dividends received (`cash` + `reinvested` across priced holdings). */
+  totalDividendsInBase: string;
+  /** Net cash dividends received and paid out (counted in cash-flow taken-out). */
+  totalCashDividendsInBase: string;
+  /** Realized P&L (net of fees) across priced holdings' closed FIFO lots. */
+  totalRealizedPnlInBase: string;
 }
 
 interface InternalLot {
@@ -336,12 +361,20 @@ export function reconstructPortfolioTimeline(params: {
       twrInputs: [],
       xirrCashFlows: [],
       externalCashFlows: [],
+      tradeEvents: [],
       excludedUnpricedSymbols: [...excludedUnpricedSet].sort(),
       firstTransactionDate: overallFirstTxDate,
       lastValuationDate: null,
       endingMarketValue: "0.00",
+      endingOpenCostBasis: "0.00",
       totalDepositsInBase: "0.00",
       totalWithdrawalsAndDividendsInBase: "0.00",
+      totalBuysGrossInBase: "0.00",
+      totalSellsGrossInBase: "0.00",
+      totalFeesInBase: "0.00",
+      totalDividendsInBase: "0.00",
+      totalCashDividendsInBase: "0.00",
+      totalRealizedPnlInBase: "0.00",
     };
   }
 
@@ -351,10 +384,17 @@ export function reconstructPortfolioTimeline(params: {
   const twrInputs: TwrDailyInput[] = [];
   const xirrCashFlows: XirrCashFlow[] = [];
   const externalCashFlows: ExternalCashFlowEvent[] = [];
+  const tradeEvents: TimelineTradeEvent[] = [];
 
   let cumulativeNetInvested = ZERO;
   let totalDepositsInBase = ZERO;
   let totalWithdrawalsAndDividendsInBase = ZERO;
+  let totalBuysGrossInBase = ZERO;
+  let totalSellsGrossInBase = ZERO;
+  let totalFeesInBase = ZERO;
+  let totalCashDividendsInBase = ZERO;
+  let totalReinvestedDividendsInBase = ZERO;
+  let totalRealizedPnlInBase = ZERO;
 
   for (const date of tradingDates) {
     let dayExternalFlow = ZERO;
@@ -404,7 +444,12 @@ export function reconstructPortfolioTimeline(params: {
             isPercent: commIsPct,
           });
           const totalNative = gross.plus(commission);
+          const grossBase = gross.mul(fx);
+          const feeBase = commission.mul(fx);
           const costBase = totalNative.mul(fx);
+
+          totalBuysGrossInBase = totalBuysGrossInBase.plus(grossBase);
+          totalFeesInBase = totalFeesInBase.plus(feeBase);
 
           state.openLots.push({
             remainingShares: qty,
@@ -425,6 +470,13 @@ export function reconstructPortfolioTimeline(params: {
             externalCashFlows.push({
               date: localDate,
               netFlow: costBase.toDecimalPlaces(6),
+            });
+            tradeEvents.push({
+              date,
+              tradeDate: localDate,
+              kind: "buy",
+              symbol: bucket.symbol,
+              amountInBase: toDecimalString(costBase.toDecimalPlaces(2), 2),
             });
           }
         } else if (tx.type === "Sell" || tx.type === "Sell All") {
@@ -447,10 +499,16 @@ export function reconstructPortfolioTimeline(params: {
               isPercent: commIsPct,
             });
             const netProceeds = grossProceeds.minus(commission);
+            const grossProceedsBase = grossProceeds.mul(fx);
+            const sellFeeBase = commission.mul(fx);
             const netProceedsBase = netProceeds.mul(fx);
 
-            // Deplete FIFO lots
+            totalSellsGrossInBase = totalSellsGrossInBase.plus(grossProceedsBase);
+            totalFeesInBase = totalFeesInBase.plus(sellFeeBase);
+
+            // Deplete FIFO lots and accumulate matched cost basis in base currency
             let remainingToSell = sharesToSell;
+            let matchedCostBase = ZERO;
             for (const lot of state.openLots) {
               if (!remainingToSell.gt(QUANTITY_EPSILON)) break;
               if (!lot.remainingShares.gt(QUANTITY_EPSILON)) continue;
@@ -463,13 +521,19 @@ export function reconstructPortfolioTimeline(params: {
               lot.remainingShares = lot.remainingShares.minus(matched);
               lot.remainingCostBasis = lot.remainingCostBasis.minus(matchedCost);
               if (lot.remainingCostBasisInBase !== null) {
+                const matchedLotCostBase = lot.remainingCostBasisInBase.mul(ratio);
+                matchedCostBase = matchedCostBase.plus(matchedLotCostBase);
                 lot.remainingCostBasisInBase =
-                  lot.remainingCostBasisInBase.minus(
-                    lot.remainingCostBasisInBase.mul(ratio),
-                  );
+                  lot.remainingCostBasisInBase.minus(matchedLotCostBase);
+              } else {
+                matchedCostBase = matchedCostBase.plus(matchedCost.mul(fx));
               }
               remainingToSell = remainingToSell.minus(matched);
             }
+
+            totalRealizedPnlInBase = totalRealizedPnlInBase.plus(
+              netProceedsBase.minus(matchedCostBase),
+            );
 
             if (netProceedsBase.gt(ZERO)) {
               dayExternalFlow = dayExternalFlow.minus(netProceedsBase);
@@ -484,6 +548,13 @@ export function reconstructPortfolioTimeline(params: {
                 date: localDate,
                 netFlow: netProceedsBase.negated().toDecimalPlaces(6),
               });
+              tradeEvents.push({
+                date,
+                tradeDate: localDate,
+                kind: "sell",
+                symbol: bucket.symbol,
+                amountInBase: toDecimalString(netProceedsBase.toDecimalPlaces(2), 2),
+              });
             }
           }
         } else if (tx.type === "Dividend") {
@@ -495,8 +566,10 @@ export function reconstructPortfolioTimeline(params: {
             });
             const netDiv = grossDiv.minus(comm);
             const divBase = netDiv.mul(fx);
+            totalFeesInBase = totalFeesInBase.plus(comm.mul(fx));
             if (divBase.gt(ZERO)) {
               dayDividendFlow = dayDividendFlow.plus(divBase);
+              totalCashDividendsInBase = totalCashDividendsInBase.plus(divBase);
               totalWithdrawalsAndDividendsInBase =
                 totalWithdrawalsAndDividendsInBase.plus(divBase);
               xirrCashFlows.push({
@@ -512,12 +585,16 @@ export function reconstructPortfolioTimeline(params: {
               isPercent: commIsPct,
             });
             const totalNative = gross.plus(comm);
+            const totalBase = totalNative.mul(fx);
+            totalFeesInBase = totalFeesInBase.plus(comm.mul(fx));
+            totalReinvestedDividendsInBase =
+              totalReinvestedDividendsInBase.plus(totalBase);
             state.openLots.push({
               remainingShares: qty,
               initialShares: qty,
               remainingCostBasis: totalNative,
               costPerShare: safeDivide(totalNative, qty) ?? price,
-              remainingCostBasisInBase: totalNative.mul(fx),
+              remainingCostBasisInBase: totalBase,
             });
           }
         }
@@ -606,6 +683,12 @@ export function reconstructPortfolioTimeline(params: {
 
   const lastPoint = points[points.length - 1];
   const endingMarketValue = lastPoint ? toDecimal(lastPoint.portfolioValue) : ZERO;
+  const endingOpenCostBasis = lastPoint
+    ? toDecimal(lastPoint.openCostBasis)
+    : ZERO;
+  const totalDividendsInBase = totalCashDividendsInBase.plus(
+    totalReinvestedDividendsInBase,
+  );
 
   if (endingMarketValue.gt(QUANTITY_EPSILON)) {
     xirrCashFlows.push({
@@ -619,14 +702,22 @@ export function reconstructPortfolioTimeline(params: {
     twrInputs,
     xirrCashFlows,
     externalCashFlows,
+    tradeEvents,
     excludedUnpricedSymbols: [...excludedUnpricedSet].sort(),
     firstTransactionDate: overallFirstTxDate,
     lastValuationDate: lastPoint?.date ?? null,
     endingMarketValue: toDecimalString(endingMarketValue, 2),
+    endingOpenCostBasis: toDecimalString(endingOpenCostBasis, 2),
     totalDepositsInBase: toDecimalString(totalDepositsInBase, 2),
     totalWithdrawalsAndDividendsInBase: toDecimalString(
       totalWithdrawalsAndDividendsInBase,
       2,
     ),
+    totalBuysGrossInBase: toDecimalString(totalBuysGrossInBase, 2),
+    totalSellsGrossInBase: toDecimalString(totalSellsGrossInBase, 2),
+    totalFeesInBase: toDecimalString(totalFeesInBase, 2),
+    totalDividendsInBase: toDecimalString(totalDividendsInBase, 2),
+    totalCashDividendsInBase: toDecimalString(totalCashDividendsInBase, 2),
+    totalRealizedPnlInBase: toDecimalString(totalRealizedPnlInBase, 2),
   };
 }

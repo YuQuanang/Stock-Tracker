@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 export interface ChartThemePalette {
   bg: string;
@@ -75,12 +75,16 @@ export function readChartThemePalette(): ChartThemePalette {
 /**
  * Returns a reactive CSS custom-property theme tick and resolved palette that
  * stays synchronized whenever `data-theme`, `data-gain-scheme`, or OS color
- * scheme changes.
+ * scheme changes. Starts from `DARK_FALLBACK_PALETTE` identically on SSR and
+ * first client render to avoid React hydration mismatches, then syncs after mount.
  */
 export function useChartThemePalette(): {
   palette: ChartThemePalette;
   themeTick: number;
 } {
+  const [palette, setPalette] = useState<ChartThemePalette>(
+    DARK_FALLBACK_PALETTE,
+  );
   const [themeTick, setThemeTick] = useState(0);
 
   useEffect(() => {
@@ -88,29 +92,28 @@ export function useChartThemePalette(): {
       return;
     }
 
-    const bump = () => setThemeTick((t) => t + 1);
+    const sync = () => {
+      setPalette(readChartThemePalette());
+      setThemeTick((t) => t + 1);
+    };
 
-    const observer = new MutationObserver(bump);
+    sync();
+
+    const observer = new MutationObserver(sync);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme", "data-gain-scheme"],
     });
 
     const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
-    mql?.addEventListener?.("change", bump);
+    mql?.addEventListener?.("change", sync);
 
     return () => {
       observer.disconnect();
-      mql?.removeEventListener?.("change", bump);
+      mql?.removeEventListener?.("change", sync);
     };
   }, []);
 
-  const palette = useMemo(() => {
-    void themeTick;
-    return typeof window !== "undefined"
-      ? readChartThemePalette()
-      : DARK_FALLBACK_PALETTE;
-  }, [themeTick]);
   return { palette, themeTick };
 }
 

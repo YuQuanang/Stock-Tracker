@@ -1,9 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
+import { BenchmarksView } from "@/components/benchmarks/benchmarks-view";
+import { BenchmarkComparisonChart } from "@/components/charts/benchmark-comparison-chart";
+import { DashboardView } from "@/components/dashboard/dashboard-view";
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import { filterPointsByAnalyticsRange } from "@/lib/charts/theme";
@@ -96,18 +101,21 @@ function createOfflineAnalyticsFetch(): typeof fetch {
       const sym = decodeURIComponent(encodedSym);
       const isSgd = sym.endsWith(".SI") || sym === "^STI";
       const basePrice =
-        sym === "^GSPC"
-          ? 3200
-          : sym === "^IXIC"
-            ? 9000
-            : sym === "^DJI"
-              ? 28000
-              : sym === "^STI"
-                ? 3100
+        sym === "VOO" || sym === "^GSPC"
+          ? 380
+          : sym === "ONEQ" || sym === "^IXIC"
+            ? 60
+            : sym === "DIA" || sym === "^DJI"
+              ? 330
+              : sym === "ES3.SI" || sym === "^STI"
+                ? 3.2
                 : isSgd
                   ? 3.2
                   : 42;
       const series = buildMockDailySeries(basePrice);
+      const adjSeries = series.closes.map((c, idx) =>
+        Number((c * (1 + idx * 0.0001)).toFixed(6)),
+      );
       const lastClose = series.closes[series.closes.length - 1] ?? basePrice;
       const prevClose = series.closes[series.closes.length - 2] ?? basePrice;
 
@@ -136,6 +144,11 @@ function createOfflineAnalyticsFetch(): typeof fetch {
                       low: series.closes.map((c) => Number((c * 0.99).toFixed(4))),
                       close: series.closes,
                       volume: series.closes.map(() => 1_000_000),
+                    },
+                  ],
+                  adjclose: [
+                    {
+                      adjclose: adjSeries,
                     },
                   ],
                 },
@@ -201,7 +214,7 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     const sgdSnapshot = await computePortfolioAnalytics({
       portfolioId: "all",
       currency: "SGD",
-      benchmarks: ["^GSPC", "^STI"],
+      benchmarks: ["VOO", "ES3.SI", "ONEQ", "DIA"],
       includeBenchmarks: true,
       includeFundamentals: true,
       db,
@@ -212,15 +225,28 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     expect(sgdSnapshot.accountHasNoTransactions).toBe(false);
     expect(sgdSnapshot.isEmpty).toBe(false);
     expect(sgdSnapshot.scope.currency).toBe("SGD");
+    expect(sgdSnapshot.scope.defaultBenchmark).toBe("VOO");
     expect(sgdSnapshot.timeline.points.length).toBeGreaterThan(200);
+    expect(sgdSnapshot.timeline.tradeEvents.length).toBeGreaterThan(0);
     expect(sgdSnapshot.performance.cumulativeTwrPercent).not.toBeNull();
     expect(sgdSnapshot.performance.xirrPercent).not.toBeNull();
+    expect(sgdSnapshot.performance.timingEffectPercent).not.toBeNull();
     expect(sgdSnapshot.performance.volatilityPercent).not.toBeNull();
     expect(sgdSnapshot.performance.drawdown.maxDrawdownPercent).not.toBeNull();
     expect(sgdSnapshot.performance.periodReturns["3Y"]).not.toBeNull();
     expect(sgdSnapshot.performance.periodReturns["5Y"]).not.toBeNull();
     expect(sgdSnapshot.performance.periodReturns.ALL).toBe(
       sgdSnapshot.performance.cumulativeTwrPercent,
+    );
+
+    // Profit breakdown reconciles cleanly with MV + takenOut - putIn = realized + unrealized + cashDivs
+    const profitFormula =
+      Number(sgdSnapshot.timeline.endingMarketValue) +
+      Number(sgdSnapshot.timeline.totalWithdrawalsAndDividendsInBase) -
+      Number(sgdSnapshot.timeline.totalDepositsInBase);
+    expect(Number(sgdSnapshot.timeline.totalProfitInBase)).toBeCloseTo(
+      profitFormula,
+      1,
     );
 
     // Multi-year portfolio (inception <= 2021-09-29) retains 3Y, 5Y, and MAX timeline spans
@@ -246,35 +272,90 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
       ),
     ).toBe(true);
 
-    // Benchmarks aligned cleanly in SGD
-    const sp500Sgd = sgdSnapshot.benchmarks["^GSPC"];
-    expect(sp500Sgd?.status).toBe("ok");
-    expect(sp500Sgd?.comparisonCurrency).toBe("SGD");
-    expect(sp500Sgd?.nativeCurrency).toBe("USD");
-    expect(sp500Sgd?.displaySymbol).toBe("GSPC");
-    expect(Number(sp500Sgd?.rebasedSeries[0]?.value)).toBe(100);
-    expect(sp500Sgd?.sameCashFlows).not.toBeNull();
-    expect(Number(sp500Sgd?.sameCashFlows?.totalDeposited)).toBeGreaterThan(0);
-    expect(sp500Sgd?.betaVsPortfolio).not.toBeNull();
-    expect(sp500Sgd?.correlationVsPortfolio).not.toBeNull();
-    expect(sp500Sgd?.periodReturns["3Y"]).not.toBeNull();
-    expect(sp500Sgd?.periodReturns["5Y"]).not.toBeNull();
-    expect(sp500Sgd?.periodReturns.ALL).toBe(sp500Sgd?.cumulativeReturnPercent);
+    // Benchmarks aligned cleanly in SGD using total-return ETFs + adjusted closes
+    const vooSgd = sgdSnapshot.benchmarks["VOO"];
+    expect(vooSgd?.status).toBe("ok");
+    expect(vooSgd?.comparisonCurrency).toBe("SGD");
+    expect(vooSgd?.nativeCurrency).toBe("USD");
+    expect(vooSgd?.displaySymbol).toBe("VOO");
+    expect(vooSgd?.sameCashFlows).not.toBeNull();
+    expect(Number(vooSgd?.sameCashFlows?.totalDeposited)).toBeGreaterThan(0);
+    expect(Number(vooSgd?.sameCashFlows?.benchmarkDeposited)).toBeGreaterThan(0);
+    expect(vooSgd?.sameCashFlows?.benchmarkXirrPercent).not.toBeNull();
+    expect(vooSgd?.timingEffectPercent).not.toBeNull();
     expect(
-      filterPointsByAnalyticsRange(sp500Sgd!.rebasedSeries, "3Y")[0]?.date,
+      vooSgd?.sameCashFlows?.dailySeries.every(
+        (pt) => Number(pt.benchmarkValue) >= 0,
+      ),
+    ).toBe(true);
+    expect(vooSgd?.betaVsPortfolio).not.toBeNull();
+    expect(vooSgd?.correlationVsPortfolio).not.toBeNull();
+    expect(vooSgd?.periodReturns["3Y"]).not.toBeNull();
+    expect(vooSgd?.periodReturns["5Y"]).not.toBeNull();
+    expect(vooSgd?.periodReturns.ALL).toBe(vooSgd?.cumulativeReturnPercent);
+    expect(
+      filterPointsByAnalyticsRange(vooSgd!.sameCashFlows!.dailySeries, "3Y")[0]
+        ?.date,
     ).toBe("2023-11-06");
     expect(
-      filterPointsByAnalyticsRange(sp500Sgd!.rebasedSeries, "5Y")[0]?.date,
-    ).toBe("2021-11-08");
-    expect(
-      filterPointsByAnalyticsRange(sp500Sgd!.sameCashFlows!.dailySeries, "5Y")[0]?.date,
+      filterPointsByAnalyticsRange(vooSgd!.sameCashFlows!.dailySeries, "5Y")[0]
+        ?.date,
     ).toBe("2021-11-08");
 
-    // Switching comparison currency to USD aligns STI (SGD -> USD) cleanly too
+    // Verify rendered BenchmarksView & DashboardView HTML structure cleanly
+    const benchHtml = renderToStaticMarkup(
+      createElement(BenchmarksView, {
+        initialSnapshot: sgdSnapshot,
+        hydrateLiveOnMount: false,
+      }),
+    );
+    expect(benchHtml).not.toContain("Rebased to 100");
+    expect(benchHtml).not.toContain("Ahead / Behind");
+    expect(benchHtml).not.toContain("vs VOO (ALL)");
+    expect(benchHtml).toContain("Same cash flows");
+    expect(benchHtml).toContain("Period returns");
+    expect(benchHtml).toContain("Total return, dividends reinvested, SGD");
+    expect(benchHtml).toContain("Profit Summary (SGD)");
+    expect(benchHtml).toContain("Timing Effect");
+    expect(benchHtml).toContain("Side-by-Side Same Cash Flows (SGD)");
+    expect(benchHtml).toContain("You vs fund");
+    expect(benchHtml).toContain("Cumulative net money invested (SGD)");
+    expect(benchHtml).toContain("VOO");
+    expect(benchHtml).toContain("ES3.SI");
+    expect(benchHtml).toContain("ONEQ");
+    expect(benchHtml).toContain("DIA");
+
+    // Verify BenchmarkComparisonChart responds to toggled fund subset like Period Returns
+    const subsetChartHtml = renderToStaticMarkup(
+      createElement(BenchmarkComparisonChart, {
+        currency: "SGD",
+        selectedBenchmarks: [
+          sgdSnapshot.benchmarks.VOO!,
+          sgdSnapshot.benchmarks["ES3.SI"]!,
+        ],
+        primaryBenchmark: sgdSnapshot.benchmarks.VOO!,
+      }),
+    );
+    expect(subsetChartHtml).toContain("Side-by-Side Same Cash Flows (SGD)");
+    expect(subsetChartHtml).toContain("VOO");
+    expect(subsetChartHtml).toContain("ES3.SI");
+    expect(subsetChartHtml).not.toContain("ONEQ");
+    expect(subsetChartHtml).not.toContain("DIA");
+
+    const dashHtml = renderToStaticMarkup(
+      createElement(DashboardView, {
+        initialSnapshot: sgdSnapshot,
+        hydrateLiveOnMount: false,
+      }),
+    );
+    expect(dashHtml).toContain("Cumulative net money invested (SGD)");
+    expect(dashHtml).toContain("Total return (dividends reinvested, SGD)");
+
+    // Switching comparison currency to USD aligns ES3.SI (SGD -> USD) cleanly too
     const usdSnapshot = await computePortfolioAnalytics({
       portfolioId: "all",
       currency: "USD",
-      benchmarks: ["^STI"],
+      benchmarks: ["ES3.SI"],
       includeBenchmarks: true,
       includeFundamentals: false,
       db,
@@ -282,9 +363,9 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
       fetchImpl,
     });
     expect(usdSnapshot.scope.currency).toBe("USD");
-    expect(usdSnapshot.benchmarks["^STI"]?.comparisonCurrency).toBe("USD");
-    expect(usdSnapshot.benchmarks["^STI"]?.nativeCurrency).toBe("SGD");
-    expect(usdSnapshot.benchmarks["^STI"]?.status).toBe("ok");
+    expect(usdSnapshot.benchmarks["ES3.SI"]?.comparisonCurrency).toBe("USD");
+    expect(usdSnapshot.benchmarks["ES3.SI"]?.nativeCurrency).toBe("SGD");
+    expect(usdSnapshot.benchmarks["ES3.SI"]?.status).toBe("ok");
 
     // Scoping to a single portfolio updates portfolioName & holdings cleanly
     const targetPortfolio = sgdSnapshot.portfolios.find(

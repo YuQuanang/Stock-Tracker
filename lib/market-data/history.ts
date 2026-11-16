@@ -62,6 +62,8 @@ export interface HistoricalPricePoint {
   high: string | null;
   low: string | null;
   close: string;
+  /** Dividend- & split-adjusted close, when supplied by the provider (`YYYY-MM-DD` bars). */
+  adjClose?: string | null;
   volume: string | null;
 }
 
@@ -82,6 +84,7 @@ interface DailyBarRecord {
   high: string | null;
   low: string | null;
   close: string;
+  adjClose?: string | null;
   volume: string | null;
   source: string;
 }
@@ -102,6 +105,9 @@ interface YahooHistoryChartResponse {
           low?: (number | null)[];
           close?: (number | null)[];
           volume?: (number | null)[];
+        }[];
+        adjclose?: {
+          adjclose?: (number | null)[];
         }[];
       };
     }[];
@@ -161,6 +167,7 @@ function mapDbPriceBarToPoint(row: {
   high: string | null;
   low: string | null;
   close: string;
+  adjClose?: string | null;
   volume: string | null;
 }): HistoricalPricePoint {
   return {
@@ -170,6 +177,7 @@ function mapDbPriceBarToPoint(row: {
     high: row.high ? toDecimalString(toDecimal(row.high), 6) : null,
     low: row.low ? toDecimalString(toDecimal(row.low), 6) : null,
     close: toDecimalString(toDecimal(row.close), 6),
+    adjClose: row.adjClose ? toDecimalString(toDecimal(row.adjClose), 8) : null,
     volume: row.volume ? toDecimalString(toDecimal(row.volume), 0) : null,
   };
 }
@@ -251,6 +259,7 @@ async function fetchYahooDailyBars(params: {
   const meta = result?.meta;
   const timestamps = result?.timestamp ?? [];
   const quote = result?.indicators?.quote?.[0];
+  const adjCloses = result?.indicators?.adjclose?.[0]?.adjclose ?? [];
 
   if (!meta || !quote || timestamps.length === 0) {
     throw new MarketDataError(
@@ -286,12 +295,19 @@ async function fetchYahooDailyBars(params: {
       continue;
     }
 
+    const rawAdj = adjCloses[i];
+    const adjClose =
+      typeof rawAdj === "number" && Number.isFinite(rawAdj) && rawAdj >= 0
+        ? toDecimalString(toDecimal(rawAdj).toDecimalPlaces(8), 8)
+        : null;
+
     byDate.set(barDate, {
       date: barDate,
       open: cleanOptionalPriceNumber(quote.open?.[i]),
       high: cleanOptionalPriceNumber(quote.high?.[i]),
       low: cleanOptionalPriceNumber(quote.low?.[i]),
       close: toDecimalString(toDecimal(rawClose).toDecimalPlaces(6), 6),
+      adjClose,
       volume: cleanOptionalVolumeNumber(quote.volume?.[i]),
       source: "yahoo",
     });
@@ -387,6 +403,7 @@ async function fetchStooqDailyBars(params: {
       high: high ? cleanOptionalPriceNumber(Number(high)) : null,
       low: low ? cleanOptionalPriceNumber(Number(low)) : null,
       close: toDecimalString(toDecimal(close), 6),
+      adjClose: null,
       volume: volume ? cleanOptionalVolumeNumber(Number(volume)) : null,
       source: "stooq",
     });
@@ -503,6 +520,7 @@ export async function upsertDailyPriceBars(
           high: bar.high,
           low: bar.low,
           close: bar.close,
+          adjClose: bar.adjClose,
           volume: bar.volume,
           source: bar.source,
         })),
@@ -514,6 +532,7 @@ export async function upsertDailyPriceBars(
           high: sql`excluded.high`,
           low: sql`excluded.low`,
           close: sql`excluded.close`,
+          adjClose: sql`COALESCE(excluded.adj_close, ${priceBar.adjClose})`,
           volume: sql`excluded.volume`,
           source: sql`excluded.source`,
         },
@@ -532,6 +551,8 @@ export interface EnsureDailyBarsOptions {
   forceRefresh?: boolean;
   /** Skip external provider calls when cached DB bars are present. */
   cacheOnly?: boolean;
+  /** Refetch full window once if cached bars are missing dividend-adjusted closes (`adj_close`). */
+  preferAdjustedClose?: boolean;
 }
 
 /**
@@ -706,6 +727,9 @@ export async function ensureInstrumentDailyBars(
   }
 
   const todayIso = getSingaporeDateString(now);
+  const missingAdjClose =
+    Boolean(options.preferAdjustedClose) &&
+    cachedRows.some((r) => r.adjClose === null || r.adjClose === undefined);
   const historicalSpanComplete =
     coversStart &&
     coversEnd &&
@@ -716,7 +740,7 @@ export async function ensureInstrumentDailyBars(
   if (
     !options.forceRefresh &&
     cachedRows.length > 0 &&
-    (recentlySynced || historicalSpanComplete)
+    (recentlySynced || (historicalSpanComplete && !missingAdjClose))
   ) {
     return {
       instrumentId: targetInstrument.id,
@@ -745,7 +769,7 @@ export async function ensureInstrumentDailyBars(
 
   // Only fetch the missing window if `coversStart` already holds!
   const fetchStart =
-    coversStart && latestCached !== null
+    coversStart && latestCached !== null && !missingAdjClose
       ? addCalendarDays(latestCached, -5)
       : options.startDate;
 
