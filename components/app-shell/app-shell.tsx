@@ -4,12 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { Search } from "lucide-react";
+import { Menu, Search } from "lucide-react";
 import { CommandPalette } from "@/components/app-shell/command-palette";
 import { Footer } from "@/components/app-shell/footer";
 import { MarketStatusBadge } from "@/components/app-shell/market-status-badge";
 import { Sidebar } from "@/components/app-shell/sidebar";
-import { TabBar } from "@/components/app-shell/tab-bar";
+import { MobileDrawer } from "@/components/app-shell/mobile-drawer";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { APP_NAME } from "@/lib/brand";
 import { fadeQuick } from "@/lib/motion";
@@ -21,6 +21,7 @@ import { fadeQuick } from "@/lib/motion";
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
@@ -49,13 +50,25 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Mobile top bar (< 768px): Wordmark, Search, and US + SGX Market Hours */}
         <header className="sticky top-0 z-30 space-y-2 border-b border-line bg-surface px-4 py-2.5 md:hidden">
           <div className="flex items-center justify-between gap-2">
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-ink"
-            >
-              <BrandLogo size={24} />
-              <span>{APP_NAME}</span>
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDrawerOpen(true)}
+                aria-label="Open menu"
+                aria-expanded={isDrawerOpen}
+                aria-controls="mobile-navigation"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] border border-line bg-surface-2 text-ink-2 transition-colors hover:text-ink"
+              >
+                <Menu size={16} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 text-[16px] font-semibold tracking-tight text-ink"
+              >
+                <BrandLogo size={24} />
+                <span>{APP_NAME}</span>
+              </Link>
+            </div>
             <button
               type="button"
               onClick={() => setIsPaletteOpen(true)}
@@ -71,7 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-5 outline-none sm:px-6 md:px-8 md:pb-12 md:pt-8"
+          className="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-5 outline-none sm:px-6 md:px-8 md:pb-12 md:pt-8"
         >
           <motion.div
             key={pathname}
@@ -85,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      <TabBar />
+      <MobileDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
       <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />
     </div>
   );

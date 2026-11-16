@@ -28,6 +28,3 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/settings", label: "Settings", Icon: Settings, keywords: "currency theme risk free password" },
 ];
 
-/** The four items shown directly in the mobile tab bar; the rest live in "More". */
-export const MOBILE_TAB_HREFS = ["/dashboard", "/holdings", "/watchlist", "/transactions"];
-

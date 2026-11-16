@@ -119,34 +119,37 @@ export async function loadPortfolioFifoSnapshot(options: {
   db?: Database;
 } = {}): Promise<PortfolioFifoSnapshot> {
   const database = options.db ?? (await getDb());
-  const appSettings = await getOrCreateSettings(database);
+  // These four reads are independent, so run them concurrently: with a remote
+  // database each sequential query costs a full network round trip.
+  const [appSettings, txRows, splitRows, fxRows] = await Promise.all([
+    getOrCreateSettings(database),
+    database
+      .select({
+        tx: transaction,
+        portfolioName: portfolio.name,
+        portfolioType: portfolio.type,
+        instr: instrument,
+      })
+      .from(transaction)
+      .innerJoin(portfolio, eq(transaction.portfolioId, portfolio.id))
+      .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
+      .where(
+        options.instrumentId
+          ? eq(transaction.instrumentId, options.instrumentId)
+          : undefined,
+      )
+      .orderBy(asc(portfolio.sortOrder), asc(instrument.symbol)),
+    options.instrumentId
+      ? database
+          .select()
+          .from(corporateAction)
+          .where(eq(corporateAction.instrumentId, options.instrumentId))
+      : database.select().from(corporateAction),
+    database.select().from(fxRate).orderBy(desc(fxRate.date)),
+  ]);
   const baseCurrency = (
     options.baseCurrencyOverride ?? appSettings.baseCurrency
   ).toUpperCase();
-
-  const txRows = await database
-    .select({
-      tx: transaction,
-      portfolioName: portfolio.name,
-      portfolioType: portfolio.type,
-      instr: instrument,
-    })
-    .from(transaction)
-    .innerJoin(portfolio, eq(transaction.portfolioId, portfolio.id))
-    .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
-    .where(
-      options.instrumentId
-        ? eq(transaction.instrumentId, options.instrumentId)
-        : undefined,
-    )
-    .orderBy(asc(portfolio.sortOrder), asc(instrument.symbol));
-
-  const splitRows = options.instrumentId
-    ? await database
-        .select()
-        .from(corporateAction)
-        .where(eq(corporateAction.instrumentId, options.instrumentId))
-    : await database.select().from(corporateAction);
 
   const splitsByInstrument = new Map<string, SplitAction[]>();
   for (const s of splitRows) {
@@ -160,10 +163,6 @@ export async function loadPortfolioFifoSnapshot(options: {
     splitsByInstrument.set(s.instrumentId, list);
   }
 
-  const fxRows = await database
-    .select()
-    .from(fxRate)
-    .orderBy(desc(fxRate.date));
   const fxBook = new FxRateBook(fxRows);
   const latestCachedUsdSgdRow = fxRows.find(
     (r) => r.fromCurrency === "USD" && r.toCurrency === "SGD",

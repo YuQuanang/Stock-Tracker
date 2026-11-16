@@ -846,7 +846,25 @@ export async function computePortfolioAnalytics(
   }
 
   // Merge live USD->SGD into an enriched FxRateBook for `asOfDate` valuation
-  const allFxRows = liveFx ? await database.select().from(fxRate) : [];
+  // Price bars and FX rows are independent reads, so fetch them concurrently.
+  const relevantInstrumentIdsForBars = [
+    ...new Set([
+      ...portfolioInstrumentDateBounds.keys(),
+      ...[...benchmarkBarResults.values()]
+        .map((r) => r.instrumentId)
+        .filter((id): id is string => Boolean(id)),
+      ...benchmarkInstrRows.map((r) => r.id),
+    ]),
+  ];
+  const [allFxRows, loadedPriceBarRows] = await Promise.all([
+    liveFx ? database.select().from(fxRate) : Promise.resolve([]),
+    relevantInstrumentIdsForBars.length > 0
+      ? database
+          .select()
+          .from(priceBar)
+          .where(inArray(priceBar.instrumentId, relevantInstrumentIdsForBars))
+      : Promise.resolve([]),
+  ]);
   const effectiveFxRateBook = liveFx
     ? new FxRateBook([
         ...allFxRows,
@@ -859,31 +877,15 @@ export async function computePortfolioAnalytics(
       ])
     : fxSyncResult.fxBook;
 
-  // Load persisted `price_bar` rows from DB for both portfolio instruments & benchmarks
-  const relevantInstrumentIds = [
-    ...new Set([
-      ...portfolioInstrumentDateBounds.keys(),
-      ...[...benchmarkBarResults.values()]
-        .map((r) => r.instrumentId)
-        .filter((id): id is string => Boolean(id)),
-      ...benchmarkInstrRows.map((r) => r.id),
-    ]),
-  ];
-
+  // Index the persisted `price_bar` rows loaded above for portfolio instruments & benchmarks
   const dailyBarsByInstrument = new Map<string, Map<string, string>>();
-  if (relevantInstrumentIds.length > 0) {
-    const rows = await database
-      .select()
-      .from(priceBar)
-      .where(inArray(priceBar.instrumentId, relevantInstrumentIds));
-    for (const row of rows) {
-      let map = dailyBarsByInstrument.get(row.instrumentId);
-      if (!map) {
-        map = new Map<string, string>();
-        dailyBarsByInstrument.set(row.instrumentId, map);
-      }
-      map.set(row.date, row.close);
+  for (const row of loadedPriceBarRows) {
+    let map = dailyBarsByInstrument.get(row.instrumentId);
+    if (!map) {
+      map = new Map<string, string>();
+      dailyBarsByInstrument.set(row.instrumentId, map);
     }
+    map.set(row.date, row.close);
   }
 
   // 3. Evaluate current Holdings overview & optional Fundamentals
