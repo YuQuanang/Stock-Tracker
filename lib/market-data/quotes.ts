@@ -147,14 +147,26 @@ async function fetchLatestViaYahoo(
     );
   }
 
+  const isLse =
+    (meta.symbol ?? symbol).toUpperCase().endsWith(".L") ||
+    (meta.exchangeName ?? "").toUpperCase() === "LSE" ||
+    (meta.exchangeName ?? "").toUpperCase() === "IOB";
+  const isPence = meta.currency === "GBp" || meta.currency === "GBX";
+  const priceScale = isPence ? 0.01 : 1;
   const rawCurrency = (meta.currency ?? "").toUpperCase();
-  if (rawCurrency !== "USD" && rawCurrency !== "SGD") {
+  if (
+    rawCurrency !== "USD" &&
+    rawCurrency !== "SGD" &&
+    !(isLse && (rawCurrency === "GBP" || rawCurrency === "GBX"))
+  ) {
     throw new MarketDataError(
       "upstream",
       "Yahoo Finance",
       `Unsupported quote currency "${rawCurrency || "unknown"}" for ${symbol}.`,
     );
   }
+  const normalizedCurrency: "USD" | "SGD" =
+    rawCurrency === "SGD" ? "SGD" : "USD";
 
   const region = inferMarketRegion(meta.symbol ?? symbol, meta.exchangeName);
   const session = getMarketSessionStatus(region, now);
@@ -222,7 +234,7 @@ async function fetchLatestViaYahoo(
     const barDate = toIsoDateInTimezone(barTimestamp, exchangeTimeZone);
     if (barDate < effectiveDate) {
       previousClose = toDecimalString(
-        toDecimal(barClose).toDecimalPlaces(4),
+        toDecimal(barClose * priceScale).toDecimalPlaces(4),
         4,
       );
       break;
@@ -233,17 +245,20 @@ async function fetchLatestViaYahoo(
     const prevCloseNum = meta.previousClose ?? meta.chartPreviousClose;
     previousClose =
       typeof prevCloseNum === "number" && Number.isFinite(prevCloseNum)
-        ? toDecimalString(toDecimal(prevCloseNum), 6)
+        ? toDecimalString(toDecimal(prevCloseNum * priceScale), 6)
         : null;
   }
 
   return {
     symbol: meta.symbol ?? symbol,
-    price: toDecimalString(toDecimal(meta.regularMarketPrice), 6),
+    price: toDecimalString(toDecimal(meta.regularMarketPrice * priceScale), 6),
     previousClose,
-    currency: rawCurrency,
-    exchangeCode:
-      region === "SG" ? "SES" : (meta.exchangeName ?? "NMS").toUpperCase(),
+    currency: normalizedCurrency,
+    exchangeCode: isLse
+      ? "LSE"
+      : region === "SG"
+        ? "SES"
+        : (meta.exchangeName ?? "NMS").toUpperCase(),
     asOf: asOfDate.toISOString(),
     effectiveDate,
     priceStatus,
@@ -352,14 +367,26 @@ async function fetchHistoricalViaYahoo(
     );
   }
 
+  const isLse =
+    (meta.symbol ?? symbol).toUpperCase().endsWith(".L") ||
+    (meta.exchangeName ?? "").toUpperCase() === "LSE" ||
+    (meta.exchangeName ?? "").toUpperCase() === "IOB";
+  const isPence = meta.currency === "GBp" || meta.currency === "GBX";
+  const priceScale = isPence ? 0.01 : 1;
   const rawCurrency = (meta.currency ?? "").toUpperCase();
-  if (rawCurrency !== "USD" && rawCurrency !== "SGD") {
+  if (
+    rawCurrency !== "USD" &&
+    rawCurrency !== "SGD" &&
+    !(isLse && (rawCurrency === "GBP" || rawCurrency === "GBX"))
+  ) {
     throw new MarketDataError(
       "upstream",
       "Yahoo Finance",
       `Unsupported currency "${rawCurrency}" for ${symbol}.`,
     );
   }
+  const normalizedCurrency: "USD" | "SGD" =
+    rawCurrency === "SGD" ? "SGD" : "USD";
 
   const region = inferMarketRegion(meta.symbol ?? symbol, meta.exchangeName);
   const exchangeTimeZone =
@@ -401,15 +428,18 @@ async function fetchHistoricalViaYahoo(
   // Yahoo encodes historical daily bars as 32-bit floats (e.g. 50.389999389);
   // rounding to 4 decimal places restores clean exchange tick prices like 50.39
   // while preserving sub-cent SGX ticks like 0.919 or 5.246.
-  const cleanedClose = toDecimal(chosenClose).toDecimalPlaces(4);
+  const cleanedClose = toDecimal(chosenClose * priceScale).toDecimalPlaces(4);
   const referenceYear = Number(getSingaporeDateString(now).slice(0, 4));
   return {
     symbol: meta.symbol ?? symbol,
     price: toDecimalString(cleanedClose, 4),
     previousClose: null,
-    currency: rawCurrency,
-    exchangeCode:
-      region === "SG" ? "SES" : (meta.exchangeName ?? "NMS").toUpperCase(),
+    currency: normalizedCurrency,
+    exchangeCode: isLse
+      ? "LSE"
+      : region === "SG"
+        ? "SES"
+        : (meta.exchangeName ?? "NMS").toUpperCase(),
     asOf: new Date(chosenTimestamp * 1000).toISOString(),
     effectiveDate: chosenDate,
     priceStatus: "historical",

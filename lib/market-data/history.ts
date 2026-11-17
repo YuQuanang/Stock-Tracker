@@ -273,8 +273,11 @@ async function fetchYahooDailyBars(params: {
   const exchangeTz =
     meta.exchangeTimezoneName ??
     (region === "SG" ? "Asia/Singapore" : "America/New_York");
+  const isPence = meta.currency === "GBp" || meta.currency === "GBX";
+  const priceScale = isPence ? 0.01 : 1;
+  const rawCurUpper = (meta.currency ?? "").toUpperCase();
   const currency =
-    (meta.currency ?? "").toUpperCase() || (region === "SG" ? "SGD" : "USD");
+    rawCurUpper === "SGD" ? "SGD" : region === "SG" ? "SGD" : "USD";
 
   // Deduplicate by calendar date in exchange timezone (keeping latest bar per day).
   const byDate = new Map<string, DailyBarRecord>();
@@ -298,15 +301,27 @@ async function fetchYahooDailyBars(params: {
     const rawAdj = adjCloses[i];
     const adjClose =
       typeof rawAdj === "number" && Number.isFinite(rawAdj) && rawAdj >= 0
-        ? toDecimalString(toDecimal(rawAdj).toDecimalPlaces(8), 8)
+        ? toDecimalString(toDecimal(rawAdj * priceScale).toDecimalPlaces(8), 8)
         : null;
+    const rawOpen = quote.open?.[i];
+    const rawHigh = quote.high?.[i];
+    const rawLow = quote.low?.[i];
 
     byDate.set(barDate, {
       date: barDate,
-      open: cleanOptionalPriceNumber(quote.open?.[i]),
-      high: cleanOptionalPriceNumber(quote.high?.[i]),
-      low: cleanOptionalPriceNumber(quote.low?.[i]),
-      close: toDecimalString(toDecimal(rawClose).toDecimalPlaces(6), 6),
+      open: cleanOptionalPriceNumber(
+        typeof rawOpen === "number" ? rawOpen * priceScale : rawOpen,
+      ),
+      high: cleanOptionalPriceNumber(
+        typeof rawHigh === "number" ? rawHigh * priceScale : rawHigh,
+      ),
+      low: cleanOptionalPriceNumber(
+        typeof rawLow === "number" ? rawLow * priceScale : rawLow,
+      ),
+      close: toDecimalString(
+        toDecimal(rawClose * priceScale).toDecimalPlaces(6),
+        6,
+      ),
       adjClose,
       volume: cleanOptionalVolumeNumber(quote.volume?.[i]),
       source: "yahoo",

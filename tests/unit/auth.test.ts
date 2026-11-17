@@ -68,13 +68,30 @@ describe("session tokens", () => {
     expect(verifySessionToken(`${token}x`)).toBe(false);
   });
 
-  it("expires after the session duration", () => {
-    const issuedAt = Date.UTC(2026, 10, 7);
+  it("expires after the session duration and on the next Singapore calendar day", () => {
+    const issuedAt = new Date("2026-11-07T00:00:00+08:00").getTime();
     const token = createSessionToken(issuedAt);
     const justBeforeExpiry = issuedAt + (SESSION_DURATION_SECONDS - 5) * 1000;
     const justAfterExpiry = issuedAt + (SESSION_DURATION_SECONDS + 5) * 1000;
     expect(verifySessionToken(token, justBeforeExpiry)).toBe(true);
     expect(verifySessionToken(token, justAfterExpiry)).toBe(false);
+
+    // A login at 10pm SGT stays valid through 11:59pm SGT that same day,
+    // and requires logging in again on the next day at 8am SGT.
+    const lateEvening = new Date("2026-11-07T22:00:00+08:00").getTime();
+    const eveningToken = createSessionToken(lateEvening);
+    expect(
+      verifySessionToken(
+        eveningToken,
+        new Date("2026-11-07T23:59:00+08:00").getTime(),
+      ),
+    ).toBe(true);
+    expect(
+      verifySessionToken(
+        eveningToken,
+        new Date("2026-11-08T08:00:00+08:00").getTime(),
+      ),
+    ).toBe(false);
   });
 });
 

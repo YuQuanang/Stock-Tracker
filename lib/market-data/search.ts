@@ -16,7 +16,9 @@ import { TtlCache } from "@/lib/market-data/cache";
 import { fetchProviderJson, MarketDataError } from "@/lib/market-data/errors";
 import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import {
+  searchViaTradingViewLse,
   searchViaTradingViewSgx,
+  verifyExactViaTradingViewLse,
   verifyExactViaTradingViewSgx,
 } from "@/lib/market-data/tradingview";
 
@@ -119,6 +121,10 @@ const EXCHANGE_DISPLAY_NAMES: Record<string, string> = {
   OTC: "OTC",
   SES: "SGX",
   SGX: "SGX",
+  LSE: "LSE",
+  LON: "LSE",
+  IOB: "LSE",
+  XLON: "LSE",
 };
 
 function mapTwelveDataRow(row: {
@@ -179,6 +185,28 @@ function mapTwelveDataRow(row: {
     };
   }
 
+  // London Stock Exchange (UK / UCITS ETFs & equities) -> canonicalize to `.L` and `LSE`
+  if (
+    exchangeUpper === "LSE" ||
+    row.mic_code === "XLON" ||
+    country === "United Kingdom"
+  ) {
+    const normalizedSymbol = rawSymbol.toUpperCase().endsWith(".L")
+      ? rawSymbol.toUpperCase()
+      : `${rawSymbol.toUpperCase()}.L`;
+    return {
+      symbol: normalizedSymbol,
+      name,
+      exchangeCode: "LSE",
+      exchangeDisplay: "LSE",
+      currency: "USD",
+      quoteType:
+        typeLower.includes("etf") || /\b(etf|ucits)\b/i.test(name)
+          ? "ETF"
+          : quoteType,
+    };
+  }
+
   // United States exchanges in USD
   if (country === "United States" && currency === "USD") {
     let exchangeCode = "NMS";
@@ -221,11 +249,14 @@ async function searchViaTwelveData(
   query: string,
   fetchImpl?: typeof fetch,
 ): Promise<SymbolSearchMatch[]> {
-  // Strip `.SI` suffix when querying Twelve Data because it indexes SGX tickers
-  // by base code (e.g. `ES3`, `A17U`), then re-attaches `.SI` in `mapTwelveDataRow`.
-  const normalizedQuery = query.toUpperCase().endsWith(".SI")
+  // Strip `.SI` or `.L` suffix when querying Twelve Data because it indexes SGX
+  // and LSE tickers by base code (e.g. `ES3`, `VWRA`), then re-attaches them in `mapTwelveDataRow`.
+  const upperRaw = query.toUpperCase();
+  const normalizedQuery = upperRaw.endsWith(".SI")
     ? query.slice(0, -3)
-    : query;
+    : upperRaw.endsWith(".L")
+      ? query.slice(0, -2)
+      : query;
 
   const url = `https://api.twelvedata.com/symbol_search?symbol=${encodeURIComponent(
     normalizedQuery,
@@ -254,7 +285,8 @@ async function searchViaTwelveData(
 
   const results: SymbolSearchMatch[] = [];
   const seen = new Set<string>();
-  const wantSgxOnly = query.toUpperCase().endsWith(".SI");
+  const wantSgxOnly = upperRaw.endsWith(".SI");
+  const wantLseOnly = upperRaw.endsWith(".L");
 
   for (const item of payload.data ?? []) {
     const mapped = mapTwelveDataRow(item);
@@ -262,6 +294,9 @@ async function searchViaTwelveData(
       continue;
     }
     if (wantSgxOnly && mapped.exchangeCode !== "SES") {
+      continue;
+    }
+    if (wantLseOnly && mapped.exchangeCode !== "LSE") {
       continue;
     }
     seen.add(mapped.symbol);
@@ -318,8 +353,13 @@ async function searchViaYahoo(
       symbol.toUpperCase().endsWith(".SI") ||
       rawExch === "SES" ||
       rawExch === "SGX";
+    const isLse =
+      symbol.toUpperCase().endsWith(".L") ||
+      rawExch === "LSE" ||
+      rawExch === "LON" ||
+      rawExch === "IOB";
     const isUs = US_EXCHANGE_CODES.has(rawExch);
-    if (!isSgx && !isUs) {
+    if (!isSgx && !isLse && !isUs) {
       continue;
     }
 
@@ -327,10 +367,12 @@ async function searchViaYahoo(
     results.push({
       symbol,
       name: officialName,
-      exchangeCode: isSgx ? "SES" : rawExch,
+      exchangeCode: isSgx ? "SES" : isLse ? "LSE" : rawExch,
       exchangeDisplay: isSgx
         ? "SGX"
-        : (EXCHANGE_DISPLAY_NAMES[rawExch] ?? (item.exchDisp || rawExch)),
+        : isLse
+          ? "LSE"
+          : (EXCHANGE_DISPLAY_NAMES[rawExch] ?? (item.exchDisp || rawExch)),
       currency: isSgx ? "SGD" : "USD",
       quoteType: rawType as "EQUITY" | "ETF" | "INDEX",
     });
@@ -405,15 +447,24 @@ async function verifyExactViaYahooChart(
     if (!meta?.symbol) {
       return null;
     }
+    const rawExch = (meta.exchangeName ?? "").toUpperCase();
+    const isLse =
+      meta.symbol.toUpperCase().endsWith(".L") ||
+      rawExch === "LSE" ||
+      rawExch === "LON" ||
+      rawExch === "IOB";
     const currencyUpper = (meta.currency ?? "").toUpperCase();
-    if (currencyUpper !== "USD" && currencyUpper !== "SGD") {
+    if (
+      currencyUpper !== "USD" &&
+      currencyUpper !== "SGD" &&
+      !(isLse && (currencyUpper === "GBP" || currencyUpper === "GBX"))
+    ) {
       return null;
     }
     const name = (meta.longName ?? meta.shortName ?? "").trim();
     if (!name) {
       return null;
     }
-    const rawExch = (meta.exchangeName ?? "").toUpperCase();
     const isSgx =
       meta.symbol.toUpperCase().endsWith(".SI") ||
       rawExch === "SES" ||
@@ -423,13 +474,16 @@ async function verifyExactViaYahooChart(
     return {
       symbol: meta.symbol,
       name,
-      exchangeCode: isSgx ? "SES" : rawExch || "NMS",
+      exchangeCode: isSgx ? "SES" : isLse ? "LSE" : rawExch || "NMS",
       exchangeDisplay: isSgx
         ? "SGX"
-        : (EXCHANGE_DISPLAY_NAMES[rawExch] ??
-            (meta.fullExchangeName || rawExch || "US Exchange")),
-      currency: currencyUpper,
-      quoteType: instType === "ETF" ? "ETF" : "EQUITY",
+        : isLse
+          ? "LSE"
+          : (EXCHANGE_DISPLAY_NAMES[rawExch] ??
+              (meta.fullExchangeName || rawExch || "US Exchange")),
+      currency: isSgx ? "SGD" : "USD",
+      quoteType:
+        instType === "ETF" || /\b(etf|ucits)\b/i.test(name) ? "ETF" : "EQUITY",
     };
   } catch (error) {
     if (error instanceof MarketDataError && error.kind === "not_found") {
@@ -481,6 +535,7 @@ export async function searchSymbols(
   const cacheKey = `${query.toLowerCase()}|${allowIndices ? "idx" : "eq"}`;
   const upperQuery = query.toUpperCase();
   const isSgxQuery = upperQuery.endsWith(".SI");
+  const isLseQuery = upperQuery.endsWith(".L");
   const queryTransition = getSgxTickerTransition(query);
 
   const executeSearch = async (): Promise<SymbolSearchMatch[]> => {
@@ -512,6 +567,16 @@ export async function searchSymbols(
             (m) => getSgxTickerTransition(m.symbol) === null,
           );
           return mergeSearchMatches(tvMatches, activePrimary);
+        }
+      }
+
+      if (isLseQuery && !hasExactPrimary) {
+        const tvLseMatches = await searchViaTradingViewLse(
+          query,
+          options.fetchImpl,
+        ).catch(() => []);
+        if (tvLseMatches.length > 0) {
+          return mergeSearchMatches(tvLseMatches, primary);
         }
       }
 
@@ -637,6 +702,17 @@ export async function lookupExactSymbol(
     );
     if (tvVerified) {
       return tvVerified;
+    }
+  }
+
+  // Fallback to TradingView UK scanner for `.L` LSE listings.
+  if (needle.endsWith(".L")) {
+    const tvLseVerified = await verifyExactViaTradingViewLse(
+      needle,
+      options.fetchImpl,
+    );
+    if (tvLseVerified) {
+      return tvLseVerified;
     }
   }
 

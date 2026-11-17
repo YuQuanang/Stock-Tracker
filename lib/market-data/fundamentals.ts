@@ -19,7 +19,7 @@ import { toDecimal, toDecimalString } from "@/lib/finance/decimal";
 import { TtlCache } from "@/lib/market-data/cache";
 import { fetchProviderJson, MarketDataError } from "@/lib/market-data/errors";
 import { inferMarketRegion } from "@/lib/market-data/hours";
-import { fetchFundamentalsViaTradingViewSgx } from "@/lib/market-data/tradingview";
+import { fetchFundamentalsViaTradingView } from "@/lib/market-data/tradingview";
 import { inferInstrumentMetadata } from "@/lib/symbols";
 
 export interface InstrumentFundamentals {
@@ -62,9 +62,20 @@ interface YahooYearChartResponse {
         shortName?: string;
         currency?: string;
         exchangeName?: string;
+        instrumentType?: string;
         fiftyTwoWeekHigh?: number;
         fiftyTwoWeekLow?: number;
+        regularMarketPrice?: number;
         regularMarketVolume?: number;
+      };
+      events?: {
+        dividends?: Record<
+          string,
+          {
+            amount?: number;
+            date?: number;
+          }
+        >;
       };
       indicators?: {
         quote?: {
@@ -165,13 +176,15 @@ export async function fetchInstrumentFundamentals(
     let beta: string | null = null;
     let sector: string | null = null;
     let industry: string | null = null;
+    let computedTtmDivYield: string | null = null;
+    let yahooInstrumentType = "";
     const sourcesUsed: string[] = [];
 
-    // 1. Yahoo 1Y chart metadata + computed 52-week range & 30-day average volume
+    // 1. Yahoo 1Y chart metadata + computed 52-week range, 30-day avg volume & TTM dividend yield
     try {
       const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
         symbol,
-      )}?interval=1d&range=1y`;
+      )}?interval=1d&range=1y&events=div`;
 
       const chart = await fetchProviderJson<YahooYearChartResponse>({
         provider: "Yahoo Finance",
@@ -182,33 +195,68 @@ export async function fetchInstrumentFundamentals(
       const res = chart.chart?.result?.[0];
       const meta = res?.meta;
       const quote = res?.indicators?.quote?.[0];
+      const isPence = meta?.currency === "GBp" || meta?.currency === "GBX";
+      const scale = isPence ? 0.01 : 1;
 
       if (meta) {
         sourcesUsed.push("yahoo");
         name = meta.longName ?? meta.shortName ?? null;
+        yahooInstrumentType = (meta.instrumentType ?? "").toUpperCase();
         if (meta.currency) {
-          currency = meta.currency.toUpperCase();
+          const upperCur = meta.currency.toUpperCase();
+          currency = upperCur === "SGD" ? "SGD" : "USD";
         }
         if (meta.exchangeName) {
           exchangeName = meta.exchangeName;
         }
-        fiftyTwoWeekHigh = safePositiveDecimal(meta.fiftyTwoWeekHigh, 4);
-        fiftyTwoWeekLow = safePositiveDecimal(meta.fiftyTwoWeekLow, 4);
+        fiftyTwoWeekHigh = safePositiveDecimal(
+          typeof meta.fiftyTwoWeekHigh === "number"
+            ? meta.fiftyTwoWeekHigh * scale
+            : undefined,
+          4,
+        );
+        fiftyTwoWeekLow = safePositiveDecimal(
+          typeof meta.fiftyTwoWeekLow === "number"
+            ? meta.fiftyTwoWeekLow * scale
+            : undefined,
+          4,
+        );
       }
 
+      let latestClosePrice: number | null =
+        typeof meta?.regularMarketPrice === "number" &&
+        Number.isFinite(meta.regularMarketPrice) &&
+        meta.regularMarketPrice > 0
+          ? meta.regularMarketPrice * scale
+          : null;
+
       if (quote) {
-        const highs = (quote.high ?? []).filter(
-          (v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0,
-        );
-        const lows = (quote.low ?? []).filter(
-          (v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0,
-        );
-        const closes = (quote.close ?? []).filter(
-          (v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0,
-        );
+        const highs = (quote.high ?? [])
+          .filter(
+            (v): v is number =>
+              typeof v === "number" && Number.isFinite(v) && v > 0,
+          )
+          .map((v) => v * scale);
+        const lows = (quote.low ?? [])
+          .filter(
+            (v): v is number =>
+              typeof v === "number" && Number.isFinite(v) && v > 0,
+          )
+          .map((v) => v * scale);
+        const closes = (quote.close ?? [])
+          .filter(
+            (v): v is number =>
+              typeof v === "number" && Number.isFinite(v) && v > 0,
+          )
+          .map((v) => v * scale);
         const volumes = (quote.volume ?? []).filter(
-          (v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0,
+          (v): v is number =>
+            typeof v === "number" && Number.isFinite(v) && v >= 0,
         );
+
+        if (!latestClosePrice && closes.length > 0) {
+          latestClosePrice = closes[closes.length - 1] ?? null;
+        }
 
         if (!fiftyTwoWeekHigh && (highs.length > 0 || closes.length > 0)) {
           const maxVal = Math.max(...(highs.length > 0 ? highs : closes));
@@ -227,9 +275,44 @@ export async function fetchInstrumentFundamentals(
           );
         }
       }
+
+      if (latestClosePrice && latestClosePrice > 0) {
+        const rawDivs = res?.events?.dividends;
+        if (rawDivs) {
+          const sortedDivs = Object.values(rawDivs)
+            .filter(
+              (d): d is { amount: number; date: number } =>
+                typeof d?.amount === "number" &&
+                Number.isFinite(d.amount) &&
+                d.amount > 0 &&
+                typeof d?.date === "number",
+            )
+            .sort((a, b) => a.date - b.date);
+
+          let ttmDivSum = 0;
+          let prevTs: number | null = null;
+          for (const d of sortedDivs) {
+            if (prevTs !== null && Math.abs(d.date - prevTs) <= 5 * 86_400) {
+              continue;
+            }
+            prevTs = d.date;
+            ttmDivSum += d.amount * scale;
+          }
+          if (ttmDivSum > 0) {
+            computedTtmDivYield = toDecimalString(
+              toDecimal((ttmDivSum / latestClosePrice) * 100).toDecimalPlaces(2),
+              2,
+            );
+          } else {
+            computedTtmDivYield = "0.00";
+          }
+        } else {
+          computedTtmDivYield = "0.00";
+        }
+      }
     } catch (error) {
       if (error instanceof MarketDataError && error.kind === "not_found") {
-        // Continue to Finnhub check if configured
+        // Continue to Finnhub / TradingView check
       }
     }
 
@@ -313,9 +396,9 @@ export async function fetchInstrumentFundamentals(
       }
     }
 
-    // 3. TradingView Singapore enrichment for `.SI` equities, REITs, ETFs & SDRs
-    if (region === "SG" && symbol.toUpperCase().endsWith(".SI")) {
-      const tv = await fetchFundamentalsViaTradingViewSgx(
+    // 3. TradingView scanner enrichment for US, SGX (`.SI`), and UK LSE (`.L`) instruments
+    if (!symbol.startsWith("^")) {
+      const tv = await fetchFundamentalsViaTradingView(
         symbol,
         options.fetchImpl,
       );
@@ -327,7 +410,11 @@ export async function fetchInstrumentFundamentals(
         if (tv.currency) {
           currency = tv.currency;
         }
-        exchangeName = exchangeName ?? "SES";
+        if (!exchangeName && symbol.toUpperCase().endsWith(".SI")) {
+          exchangeName = "SES";
+        } else if (!exchangeName && symbol.toUpperCase().endsWith(".L")) {
+          exchangeName = "LSE";
+        }
         if (!marketCap && tv.marketCap) {
           marketCap = tv.marketCap;
         }
@@ -356,6 +443,32 @@ export async function fetchInstrumentFundamentals(
           industry = tv.industry;
         }
       }
+    }
+
+    if (!dividendYieldPercent && computedTtmDivYield !== null) {
+      dividendYieldPercent = computedTtmDivYield;
+    }
+
+    const isEtfOrFund =
+      yahooInstrumentType === "ETF" ||
+      inferred.assetType === "etf" ||
+      /\b(etf|ucits)\b/i.test(name ?? "");
+
+    if (!sector && !industry) {
+      if (isEtfOrFund) {
+        sector = "Exchange-Traded Fund";
+        industry = "ETF";
+      } else if (
+        inferred.assetType === "reit" ||
+        /\b(reit|real estate)\b/i.test(name ?? "")
+      ) {
+        sector = "Finance";
+        industry = "Real Estate Investment Trusts";
+      }
+    }
+
+    if (!beta && isEtfOrFund) {
+      beta = "1.00";
     }
 
     if (sourcesUsed.length === 0) {

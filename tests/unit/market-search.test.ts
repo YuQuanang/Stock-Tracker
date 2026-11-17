@@ -45,6 +45,15 @@ describe("Step (a): live symbol and company name search", () => {
             currency: "SGD",
             instrument_type: "ETF",
           },
+          {
+            symbol: "VWRA",
+            instrument_name: "Vanguard FTSE All-World UCITS ETF",
+            exchange: "LSE",
+            mic_code: "XLON",
+            country: "United Kingdom",
+            currency: "USD",
+            instrument_type: "ETF",
+          },
         ],
       }),
     });
@@ -69,12 +78,20 @@ describe("Step (a): live symbol and company name search", () => {
         currency: "SGD",
         quoteType: "ETF",
       },
+      {
+        symbol: "VWRA.L",
+        name: "Vanguard FTSE All-World UCITS ETF",
+        exchangeCode: "LSE",
+        exchangeDisplay: "LSE",
+        currency: "USD",
+        quoteType: "ETF",
+      },
     ]);
 
     const cached = await searchSymbols("app", {
       fetchImpl: mockFetch as unknown as typeof fetch,
     });
-    expect(cached).toHaveLength(2);
+    expect(cached).toHaveLength(3);
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 

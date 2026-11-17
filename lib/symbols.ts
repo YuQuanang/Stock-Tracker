@@ -62,6 +62,8 @@ export function inferInstrumentMetadata(params: {
   let exchangeCode = rawExchange;
   if (!exchangeCode && upperSymbol.endsWith(".SI")) {
     exchangeCode = "SES";
+  } else if (!exchangeCode && upperSymbol.endsWith(".L")) {
+    exchangeCode = "LSE";
   }
 
   // 3. Determine asset type
@@ -77,7 +79,10 @@ export function inferInstrumentMetadata(params: {
       /^[A-Z0-9]{2,10}-(USD|SGD)$/.test(upperSymbol)
     ) {
       assetType = "crypto";
-    } else if (upperExchange === "PCX" || /\betf\b/.test(lowerName)) {
+    } else if (
+      upperExchange === "PCX" ||
+      /\b(etf|ucits)\b/.test(lowerName)
+    ) {
       assetType = "etf";
     } else if (/\breit\b/.test(lowerName)) {
       assetType = "reit";

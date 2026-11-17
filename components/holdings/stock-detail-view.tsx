@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -515,13 +514,20 @@ export function StockDetailView({
     <div className="space-y-6">
       {/* Top Breadcrumb + Action Bar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Link
-          href="/holdings"
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+            } else {
+              router.push("/holdings");
+            }
+          }}
           className="inline-flex w-fit items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 -ml-2.5 text-[14px] font-medium text-accent transition-colors hover:bg-accent/10"
         >
           <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
-          <span>Holdings</span>
-        </Link>
+          <span>Back</span>
+        </button>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -965,7 +971,10 @@ export function StockDetailView({
               <dd className="num font-medium text-ink">
                 {fundamentals.peTrailing
                   ? Number(fundamentals.peTrailing).toFixed(2)
-                  : "—"}
+                  : instrument.assetType === "etf" ||
+                      fundamentals.industry === "ETF"
+                    ? "N/A (ETF)"
+                    : "—"}
               </dd>
             </div>
 

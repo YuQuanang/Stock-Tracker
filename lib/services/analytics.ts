@@ -233,6 +233,7 @@ export interface PortfolioAnalyticsSnapshot {
     xirrPercent: string | null;
     cumulativeTwrPercent: string | null;
     annualizedTwrPercent: string | null;
+    roiPercent: string | null;
     timingEffectPercent: string | null;
     periodReturns: Record<PeriodReturnKey, string | null>;
     volatilityPercent: string | null;
@@ -1553,13 +1554,17 @@ export async function computePortfolioAnalytics(
 
   const endingMarketValueDec = toDecimal(timeline.endingMarketValue);
   const endingOpenCostBasisDec = toDecimal(timeline.endingOpenCostBasis);
+  const totalDepositsDec = toDecimal(timeline.totalDepositsInBase);
   const endingUnrealizedPnlDec = endingMarketValueDec
     .minus(endingOpenCostBasisDec)
     .toDecimalPlaces(2);
   const totalProfitDec = endingMarketValueDec
     .plus(toDecimal(timeline.totalWithdrawalsAndDividendsInBase))
-    .minus(toDecimal(timeline.totalDepositsInBase))
+    .minus(totalDepositsDec)
     .toDecimalPlaces(2);
+  const roiPercentDec = totalDepositsDec.gt(ZERO)
+    ? totalProfitDec.div(totalDepositsDec).mul(HUNDRED)
+    : null;
 
   return {
     accountHasNoTransactions,
@@ -1617,6 +1622,7 @@ export async function computePortfolioAnalytics(
         twrResult.annualizedReturnPercent,
         2,
       ),
+      roiPercent: toNullableDecimalString(roiPercentDec, 2),
       timingEffectPercent: toNullableDecimalString(portfolioTimingEffectDec, 2),
       periodReturns: formatPeriodReturns(periodReturnsRaw),
       volatilityPercent: toNullableDecimalString(volatilityPct, 2),

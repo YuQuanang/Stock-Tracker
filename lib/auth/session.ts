@@ -14,8 +14,17 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getEnv } from "@/lib/env";
 
-/** Sessions last 30 days so the phone stays signed in. */
-export const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 30;
+/** Sessions last 1 day (24 hours) and expire each new Singapore calendar day. */
+export const SESSION_DURATION_SECONDS = 60 * 60 * 24;
+
+function getSingaporeCalendarDay(nowMilliseconds: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(nowMilliseconds));
+}
 
 const DEVELOPMENT_ONLY_SECRET =
   "folio-development-only-secret-do-not-use-in-production-0123456789";
@@ -51,12 +60,14 @@ function sign(payload: string): Buffer {
 
 interface SessionPayload {
   exp: number; // expiry, seconds since the Unix epoch
+  day: string; // YYYY-MM-DD in Asia/Singapore so user logs in once each day
   ver: string; // password fingerprint
 }
 
 export function createSessionToken(nowMilliseconds: number = Date.now()): string {
   const payload: SessionPayload = {
     exp: Math.floor(nowMilliseconds / 1000) + SESSION_DURATION_SECONDS,
+    day: getSingaporeCalendarDay(nowMilliseconds),
     ver: getPasswordVersion(),
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -64,7 +75,7 @@ export function createSessionToken(nowMilliseconds: number = Date.now()): string
   return `${encodedPayload}.${signature}`;
 }
 
-/** Returns true only for an untampered, unexpired token for the current password. */
+/** Returns true only for an untampered, unexpired token for the current day and password. */
 export function verifySessionToken(
   token: string | undefined,
   nowMilliseconds: number = Date.now(),
@@ -97,8 +108,11 @@ export function verifySessionToken(
 
   const isNotExpired =
     typeof payload.exp === "number" && payload.exp > Math.floor(nowMilliseconds / 1000);
+  const isSameDay =
+    typeof payload.day === "string" &&
+    payload.day === getSingaporeCalendarDay(nowMilliseconds);
   const passwordUnchanged = payload.ver === getPasswordVersion();
-  return isNotExpired && passwordUnchanged;
+  return isNotExpired && isSameDay && passwordUnchanged;
 }
 
 /** Cookie attributes shared by login (set) and logout (clear). */

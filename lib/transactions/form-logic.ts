@@ -113,6 +113,14 @@ export function formatExchangeCodeForDisplay(
   if (normalized === "SES" || normalized === "SGX") {
     return "SGX";
   }
+  if (
+    normalized === "LSE" ||
+    normalized === "LON" ||
+    normalized === "IOB" ||
+    normalized === "XLON"
+  ) {
+    return "LSE";
+  }
   if (normalized === "NMS" || normalized === "NGM" || normalized === "NCM") {
     return "NASDAQ";
   }

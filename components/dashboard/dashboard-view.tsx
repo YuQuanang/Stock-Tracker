@@ -723,101 +723,178 @@ export function DashboardView({
           isLoadingScope ? "opacity-65" : "opacity-100"
         }`}
       >
-        {/* Row 1: Secondary Performance Metric Cards (flat #161B22 surfaces) */}
+        {/* Row 1: Secondary Performance Metric Cards (Apple-style balanced 3-part anatomy) */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Card className="p-4 sm:p-5">
-            <div className="flex items-center gap-1.5">
-              <p className="text-[12px] font-medium text-ink-2">
-                Unrealized P&amp;L
+          <Card className="flex flex-col justify-between p-5">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[12.5px] font-medium text-ink-2">
+                    Unrealized P&amp;L
+                  </p>
+                  <MetricTooltip
+                    label="Unrealized P&L"
+                    explanation="Profit or loss on shares you still hold today, comparing current market value against remaining FIFO purchase cost."
+                  />
+                </div>
+                <GainBadge
+                  percent={summary.totalUnrealizedPnlPercent}
+                  size="sm"
+                  pill
+                />
+              </div>
+              <p
+                className={`num mt-2.5 text-[24px] font-semibold leading-tight tracking-[-0.02em] ${
+                  Number(summary.totalUnrealizedPnlInBase) > 0
+                    ? "text-gain"
+                    : Number(summary.totalUnrealizedPnlInBase) < 0
+                      ? "text-loss"
+                      : "text-ink"
+                }`}
+              >
+                {formatMoney(summary.totalUnrealizedPnlInBase, currency, {
+                  locale,
+                  signed: true,
+                })}
               </p>
-              <MetricTooltip
-                label="Unrealized P&L"
-                explanation="Profit or loss on shares you still hold today, comparing current market value against remaining FIFO purchase cost."
-              />
             </div>
-            <div className="mt-2">
-              <GainBadge
-                amount={summary.totalUnrealizedPnlInBase}
-                currency={currency}
-                percent={summary.totalUnrealizedPnlPercent}
-                size="md"
-              />
-            </div>
-            <p className="num mt-2 text-[12px] text-ink-2">
-              Open cost basis{" "}
-              <span className="font-medium text-ink">
-                {formatMoney(summary.totalCostBasisInBase, currency, { locale })}
-              </span>
-            </p>
-          </Card>
-
-          <Card className="p-4 sm:p-5">
-            <div className="flex items-center gap-1.5">
-              <p className="text-[12px] font-medium text-ink-2">
-                Realized &amp; Dividends
-              </p>
-              <MetricTooltip
-                label="Realized P&L + Dividends"
-                explanation="Locked-in net gains from closed trades plus net dividends collected across the selected portfolio scope."
-              />
-            </div>
-            <div className="mt-2">
-              <GainBadge
-                amount={totalRealizedAndDividends}
-                currency={currency}
-                size="md"
-              />
-            </div>
-            <p className="num mt-2 text-[12px] text-ink-2">
-              Realized{" "}
-              <span className="font-medium text-ink">
-                {formatMoney(summary.totalRealizedPnlInBase, currency, { locale })}
-              </span>
-              {performance.winRatePercent
-                ? ` · ${performance.winRatePercent}% win rate`
-                : ""}
-            </p>
-          </Card>
-
-          <Card className="p-4 sm:p-5">
-            <div className="flex items-center gap-1.5">
-              <p className="text-[12px] font-medium text-ink-2">
-                Returns (TWR &amp; XIRR)
-              </p>
-              <MetricTooltip
-                label="Annualized TWR, Cumulative TWR & XIRR"
-                explanation="Annualized & Cumulative TWR measure pure portfolio strategy skill independent of cash-flow timing. Annualized XIRR measures your personal money-weighted return including deposits & withdrawals."
-              />
-            </div>
-            <dl className="mt-2 divide-y divide-line">
-              <div className="flex items-center justify-between gap-2 pb-1.5">
-                <dt className="text-[12px] font-medium text-ink-2">
-                  Annualized TWR
+            <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-3">
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">
+                  Open Cost Basis
                 </dt>
-                <dd className="text-right">
+                <dd className="num mt-0.5 text-[13px] font-medium text-ink">
+                  {formatMoney(summary.totalCostBasisInBase, currency, {
+                    locale,
+                  })}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">
+                  Market Value
+                </dt>
+                <dd className="num mt-0.5 text-[13px] font-medium text-ink">
+                  {formatMoney(summary.totalMarketValueInBase, currency, {
+                    locale,
+                  })}
+                </dd>
+              </div>
+            </dl>
+          </Card>
+
+          <Card className="flex flex-col justify-between p-5">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[12.5px] font-medium text-ink-2">
+                    Realized &amp; Dividends
+                  </p>
+                  <MetricTooltip
+                    label="Realized P&L + Dividends"
+                    explanation="Locked-in net gains from closed trades plus net after-tax dividends collected across the selected portfolio scope."
+                  />
+                </div>
+                {performance.winRatePercent && (
+                  <span className="num rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
+                    {performance.winRatePercent}% win rate
+                  </span>
+                )}
+              </div>
+              <p
+                className={`num mt-2.5 text-[24px] font-semibold leading-tight tracking-[-0.02em] ${
+                  totalRealizedAndDividends > 0
+                    ? "text-gain"
+                    : totalRealizedAndDividends < 0
+                      ? "text-loss"
+                      : "text-ink"
+                }`}
+              >
+                {formatMoney(totalRealizedAndDividends, currency, {
+                  locale,
+                  signed: true,
+                })}
+              </p>
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-3">
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">
+                  Realized P&amp;L
+                </dt>
+                <dd className="num mt-0.5 text-[13px] font-medium text-ink">
+                  {formatMoney(summary.totalRealizedPnlInBase, currency, {
+                    locale,
+                    signed: true,
+                  })}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">
+                  Dividends (Net)
+                </dt>
+                <dd className="num mt-0.5 text-[13px] font-medium text-ink">
+                  {formatMoney(summary.totalDividendsInBase, currency, {
+                    locale,
+                  })}
+                </dd>
+              </div>
+            </dl>
+          </Card>
+
+          <Card className="flex flex-col justify-between p-5">
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[12.5px] font-medium text-ink-2">
+                    Returns (XIRR, TWR &amp; ROI)
+                  </p>
+                  <MetricTooltip
+                    label="Annualized XIRR, TWR & ROI"
+                    explanation="Annualized XIRR measures your personal money-weighted return including deposits & withdrawals. Annualized & Cumulative TWR measure pure portfolio strategy skill independent of cash-flow timing. ROI measures total dollar profit divided by total capital put in."
+                  />
+                </div>
+                <span className="rounded-[8px] border border-line bg-surface-2 px-2 py-0.5 text-[11.5px] font-medium text-ink-2">
+                  Ann. XIRR
+                </span>
+              </div>
+              <p
+                className={`num mt-2.5 text-[24px] font-semibold leading-tight tracking-[-0.02em] ${
+                  performance.xirrPercent === null
+                    ? "text-ink-2"
+                    : Number(performance.xirrPercent) > 0
+                      ? "text-gain"
+                      : Number(performance.xirrPercent) < 0
+                        ? "text-loss"
+                        : "text-ink"
+                }`}
+              >
+                {performance.xirrPercent !== null
+                  ? formatPercent(performance.xirrPercent, { signed: true })
+                  : "—"}
+              </p>
+            </div>
+            <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">Ann. TWR</dt>
+                <dd className="mt-0.5">
                   <GainBadge
                     percent={performance.annualizedTwrPercent}
-                    size="md"
+                    size="sm"
                   />
                 </dd>
               </div>
-              <div className="flex items-center justify-between gap-2 py-1.5">
-                <dt className="text-[12px] font-medium text-ink-2">
-                  Cumulative TWR
-                </dt>
-                <dd className="text-right">
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">Cum. TWR</dt>
+                <dd className="mt-0.5">
                   <GainBadge
                     percent={performance.cumulativeTwrPercent}
-                    size="md"
+                    size="sm"
                   />
                 </dd>
               </div>
-              <div className="flex items-center justify-between gap-2 pt-1.5">
-                <dt className="text-[12px] font-medium text-ink-2">
-                  Annualized XIRR
-                </dt>
-                <dd className="text-right">
-                  <GainBadge percent={performance.xirrPercent} size="md" />
+              <div>
+                <dt className="text-[11px] font-medium text-ink-3">Total ROI</dt>
+                <dd className="mt-0.5">
+                  <GainBadge percent={performance.roiPercent} size="sm" />
                 </dd>
               </div>
             </dl>

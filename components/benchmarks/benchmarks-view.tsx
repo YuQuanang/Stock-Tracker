@@ -601,29 +601,41 @@ export function BenchmarksView({
           </Card>
         </div>
 
-        {/* Profit Summary (Dollars + XIRR) & Timing Effect */}
+        {/* Profit Summary (Dollars + XIRR/TWR/ROI) & Timing Effect */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
           <Card className="space-y-4 p-5 lg:col-span-7">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-[16px] font-semibold tracking-tight text-ink">
-                  Profit Summary ({currency})
-                </h2>
-                <p className="mt-0.5 text-[12px] text-ink-3">
-                  Profit = current market value + money taken out (sells &amp;
-                  dividends) − money put in (buys &amp; fees)
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
-                  XIRR (annualized)
-                </p>
-                <div className="mt-0.5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-[16px] font-semibold tracking-tight text-ink">
+                Profit Summary ({currency})
+              </h2>
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
+                    XIRR
+                  </span>
                   <GainBadge
-                    amount={snapshot.timeline.totalProfitInBase}
-                    currency={currency}
                     percent={performance.xirrPercent}
-                    size="md"
+                    size="sm"
+                    pill
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
+                    TWR
+                  </span>
+                  <GainBadge
+                    percent={performance.annualizedTwrPercent}
+                    size="sm"
+                    pill
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11.5px] font-medium uppercase tracking-[0.04em] text-ink-3">
+                    ROI
+                  </span>
+                  <GainBadge
+                    percent={performance.roiPercent}
+                    size="sm"
                     pill
                   />
                 </div>
@@ -715,16 +727,6 @@ export function BenchmarksView({
                 </div>
               </dl>
             </div>
-            {snapshot.timeline.excludedUnpricedSymbols.length > 0 && (
-              <p className="text-[11.5px] text-ink-3">
-                Excludes unpriced symbols (
-                <span className="font-mono">
-                  {snapshot.timeline.excludedUnpricedSymbols.join(", ")}
-                </span>
-                ) so dollar profit reconciles directly with your benchmarked
-                portfolio cash flows.
-              </p>
-            )}
           </Card>
 
           <Card className="flex flex-col justify-between space-y-4 p-5 lg:col-span-5">

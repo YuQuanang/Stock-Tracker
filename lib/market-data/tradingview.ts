@@ -19,6 +19,8 @@ import type {
 import type { SymbolSearchMatch } from "@/lib/market-data/search";
 
 const TV_SGX_SCAN_URL = "https://scanner.tradingview.com/singapore/scan";
+const TV_US_SCAN_URL = "https://scanner.tradingview.com/america/scan";
+const TV_UK_SCAN_URL = "https://scanner.tradingview.com/uk/scan";
 const TV_GLOBAL_SCAN_URL = "https://scanner.tradingview.com/global/scan";
 const TV_SYMBOL_SEARCH_URL =
   "https://symbol-search.tradingview.com/symbol_search/v3/";
@@ -81,6 +83,9 @@ const SCAN_COLUMNS_FUNDAMENTALS = [
   "average_volume_30d_calc",
   "sector",
   "industry",
+  "type",
+  "subtype",
+  "aum",
 ] as const;
 
 const SCAN_COLUMNS_VERIFY = [
@@ -187,10 +192,15 @@ function safeSignedDecimalString(
 
 async function queryScannerRow(params: {
   endpoint: string;
-  ticker: string;
+  ticker?: string;
+  tickers?: readonly string[];
   columns: readonly string[];
   fetchImpl?: typeof fetch;
 }): Promise<unknown[] | null> {
+  const tickers = params.tickers ?? (params.ticker ? [params.ticker] : []);
+  if (tickers.length === 0) {
+    return null;
+  }
   const payload = await fetchProviderJson<TradingViewScanResponse>({
     provider: "TradingView",
     url: params.endpoint,
@@ -200,7 +210,7 @@ async function queryScannerRow(params: {
       ...TV_HEADERS,
     },
     body: JSON.stringify({
-      symbols: { tickers: [params.ticker] },
+      symbols: { tickers },
       columns: params.columns,
     }),
     timeoutMs: 6000,
@@ -313,19 +323,48 @@ export async function fetchLatestViaTradingViewSgx(
   };
 }
 
+function resolveTradingViewFundamentalsTargets(rawSymbol: string): {
+  endpoint: string;
+  tickers: string[];
+} | null {
+  const upper = rawSymbol.trim().toUpperCase();
+  if (!upper || upper.startsWith("^")) {
+    return null;
+  }
+  if (upper.endsWith(".SI") && upper.length > 3) {
+    return {
+      endpoint: TV_SGX_SCAN_URL,
+      tickers: [`SGX:${upper.slice(0, -3)}`],
+    };
+  }
+  if (upper.endsWith(".L") && upper.length > 2) {
+    return {
+      endpoint: TV_UK_SCAN_URL,
+      tickers: [`LSE:${upper.slice(0, -2)}`],
+    };
+  }
+  const tvSym = upper.replace(/-/g, ".");
+  return {
+    endpoint: TV_US_SCAN_URL,
+    tickers: [
+      `NASDAQ:${tvSym}`,
+      `NYSE:${tvSym}`,
+      `AMEX:${tvSym}`,
+      `OTC:${tvSym}`,
+    ],
+  };
+}
+
 /**
- * Fetches company/REIT/ETF key statistics for a Singapore `.SI` ticker from
- * TradingView's Singapore scanner. Never throws (returns `null` on failure).
+ * Fetches company/REIT/ETF key statistics for any US, SGX (`.SI`), or UK LSE
+ * (`.L`) ticker from TradingView's public scanner. Never throws (returns `null`
+ * on failure).
  */
-export async function fetchFundamentalsViaTradingViewSgx(
+export async function fetchFundamentalsViaTradingView(
   symbol: string,
   fetchImpl?: typeof fetch,
 ): Promise<TradingViewFundamentalsResult | null> {
-  const upper = symbol.trim().toUpperCase();
-  if (!upper.endsWith(".SI")) {
-    return null;
-  }
-  const target = toTradingViewSgxTarget(upper);
+  const target = resolveTradingViewFundamentalsTargets(symbol);
   if (!target) {
     return null;
   }
@@ -333,7 +372,7 @@ export async function fetchFundamentalsViaTradingViewSgx(
   try {
     const row = await queryScannerRow({
       endpoint: target.endpoint,
-      ticker: target.ticker,
+      tickers: target.tickers,
       columns: SCAN_COLUMNS_FUNDAMENTALS,
       fetchImpl,
     });
@@ -344,12 +383,13 @@ export async function fetchFundamentalsViaTradingViewSgx(
     const description =
       typeof row[1] === "string" && row[1].trim() ? row[1].trim() : null;
     const rawCur = typeof row[2] === "string" ? row[2].toUpperCase() : "";
-    const currency = rawCur === "USD" || rawCur === "SGD" ? rawCur : null;
+    const isPence = row[2] === "GBX" || row[2] === "GBp";
+    const currency = rawCur === "SGD" ? "SGD" : "USD";
 
     const dividendYieldRaw =
-      typeof row[5] === "number" && Number.isFinite(row[5]) && row[5] > 0
+      typeof row[5] === "number" && Number.isFinite(row[5]) && row[5] >= 0
         ? row[5]
-        : typeof row[6] === "number" && Number.isFinite(row[6]) && row[6] > 0
+        : typeof row[6] === "number" && Number.isFinite(row[6]) && row[6] >= 0
           ? row[6]
           : null;
 
@@ -358,23 +398,73 @@ export async function fetchFundamentalsViaTradingViewSgx(
         ? Math.round(row[10])
         : null;
 
+    const marketCapOrAum =
+      safePositiveDecimalString(row[3], 0) ??
+      safePositiveDecimalString(row[15], 0);
+
+    const rawHigh =
+      typeof row[7] === "number" && Number.isFinite(row[7])
+        ? isPence
+          ? row[7] / 100
+          : row[7]
+        : null;
+    const rawLow =
+      typeof row[8] === "number" && Number.isFinite(row[8])
+        ? isPence
+          ? row[8] / 100
+          : row[8]
+        : null;
+
+    let sector =
+      typeof row[11] === "string" && row[11].trim() ? row[11].trim() : null;
+    let industry =
+      typeof row[12] === "string" && row[12].trim() ? row[12].trim() : null;
+    const typeLower =
+      typeof row[13] === "string" ? row[13].trim().toLowerCase() : "";
+    const subtypeLower =
+      typeof row[14] === "string" ? row[14].trim().toLowerCase() : "";
+
+    if (!sector && !industry) {
+      if (
+        typeLower === "fund" ||
+        subtypeLower.includes("etf") ||
+        /\b(etf|ucits)\b/i.test(description ?? "")
+      ) {
+        sector = "Exchange-Traded Fund";
+        industry = "ETF";
+      } else if (
+        typeLower === "reit" ||
+        subtypeLower.includes("reit") ||
+        /\b(reit|trust)\b/i.test(description ?? "")
+      ) {
+        sector = "Finance";
+        industry = "Real Estate Investment Trusts";
+      }
+    }
+
     return {
       name: description,
       currency,
-      marketCap: safePositiveDecimalString(row[3], 0),
+      marketCap: marketCapOrAum,
       peTrailing: safePositiveDecimalString(row[4], 2),
-      dividendYieldPercent: safePositiveDecimalString(dividendYieldRaw, 2),
-      fiftyTwoWeekHigh: safePositiveDecimalString(row[7], 4),
-      fiftyTwoWeekLow: safePositiveDecimalString(row[8], 4),
+      dividendYieldPercent:
+        dividendYieldRaw !== null
+          ? toDecimalString(toDecimal(dividendYieldRaw).toDecimalPlaces(2), 2)
+          : null,
+      fiftyTwoWeekHigh: safePositiveDecimalString(rawHigh, 4),
+      fiftyTwoWeekLow: safePositiveDecimalString(rawLow, 4),
       beta: safeSignedDecimalString(row[9], 2),
       averageVolume: avgVolRaw !== null ? String(avgVolRaw) : null,
-      sector: typeof row[11] === "string" && row[11].trim() ? row[11].trim() : null,
-      industry: typeof row[12] === "string" && row[12].trim() ? row[12].trim() : null,
+      sector,
+      industry,
     };
   } catch {
     return null;
   }
 }
+
+export const fetchFundamentalsViaTradingViewSgx =
+  fetchFundamentalsViaTradingView;
 
 /**
  * Searches Singapore Exchange equities, REITs, ETFs, and SDRs on TradingView.
@@ -515,6 +605,139 @@ export async function verifyExactViaTradingViewSgx(
   }
 }
 
+/**
+ * Searches London Stock Exchange (`.L` / UCITS ETFs & equities) on TradingView.
+ */
+export async function searchViaTradingViewLse(
+  rawQuery: string,
+  fetchImpl?: typeof fetch,
+): Promise<SymbolSearchMatch[]> {
+  const clean = rawQuery.trim();
+  if (!clean) {
+    return [];
+  }
+  const searchText = clean.toUpperCase().endsWith(".L")
+    ? clean.slice(0, -2)
+    : clean;
+  if (!searchText) {
+    return [];
+  }
+
+  const url = `${TV_SYMBOL_SEARCH_URL}?text=${encodeURIComponent(
+    searchText,
+  )}&exchange=LSE&domain=production`;
+
+  const payload = await fetchProviderJson<TradingViewSearchResponse>({
+    provider: "TradingView",
+    url,
+    headers: TV_HEADERS,
+    timeoutMs: 6000,
+    fetchImpl,
+  });
+
+  const results: SymbolSearchMatch[] = [];
+  const seen = new Set<string>();
+
+  for (const item of payload.symbols ?? []) {
+    const code = (item.symbol ?? "").trim().toUpperCase();
+    const name = (item.description ?? "").trim();
+    const exchange = (item.exchange ?? "").trim().toUpperCase();
+    const typeLower = (item.type ?? "").trim().toLowerCase();
+
+    if (!code || !name || (exchange !== "LSE" && exchange !== "LSIN")) {
+      continue;
+    }
+
+    const allowed =
+      typeLower === "stock" ||
+      typeLower === "fund" ||
+      typeLower === "etf" ||
+      typeLower === "reit" ||
+      typeLower === "dr";
+    if (!allowed) {
+      continue;
+    }
+
+    const symbol = code.endsWith(".L") ? code : `${code}.L`;
+    if (seen.has(symbol)) {
+      continue;
+    }
+    seen.add(symbol);
+
+    const quoteType: "EQUITY" | "ETF" =
+      typeLower === "fund" ||
+      typeLower === "etf" ||
+      /\b(etf|ucits)\b/i.test(name)
+        ? "ETF"
+        : "EQUITY";
+
+    results.push({
+      symbol,
+      name,
+      exchangeCode: "LSE",
+      exchangeDisplay: "LSE",
+      currency: "USD",
+      quoteType,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Verifies an exact `.L` LSE ticker directly via TradingView UK Scanner.
+ */
+export async function verifyExactViaTradingViewLse(
+  symbol: string,
+  fetchImpl?: typeof fetch,
+): Promise<SymbolSearchMatch | null> {
+  const upper = symbol.trim().toUpperCase();
+  if (!upper.endsWith(".L") || upper.length <= 2) {
+    return null;
+  }
+  const base = upper.slice(0, -2);
+
+  try {
+    const row = await queryScannerRow({
+      endpoint: TV_UK_SCAN_URL,
+      ticker: `LSE:${base}`,
+      columns: SCAN_COLUMNS_VERIFY,
+      fetchImpl,
+    });
+    if (!row) {
+      return null;
+    }
+
+    const name =
+      typeof row[1] === "string" && row[1].trim() ? row[1].trim() : null;
+    const typeLower = typeof row[2] === "string" ? row[2].toLowerCase() : "";
+    const subtypeLower =
+      typeof row[3] === "string" ? row[3].toLowerCase() : "";
+
+    if (!name) {
+      return null;
+    }
+
+    const quoteType: "EQUITY" | "ETF" =
+      typeLower === "fund" ||
+      subtypeLower === "etf" ||
+      /\b(etf|ucits)\b/i.test(name)
+        ? "ETF"
+        : "EQUITY";
+
+    return {
+      symbol: upper,
+      name,
+      exchangeCode: "LSE",
+      exchangeDisplay: "LSE",
+      currency: "USD",
+      quoteType,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface TradingViewDailyBar {
   date: string;
   open: string | null;
@@ -614,6 +837,14 @@ async function resolveTradingViewChartTarget(
       ticker: `SGX:${upper.slice(0, -3)}`,
       defaultCurrency: "SGD",
       defaultTimezone: "Asia/Singapore",
+    };
+  }
+
+  if (upper.endsWith(".L") && upper.length > 2) {
+    return {
+      ticker: `LSE:${upper.slice(0, -2)}`,
+      defaultCurrency: "USD",
+      defaultTimezone: "Europe/London",
     };
   }
 
