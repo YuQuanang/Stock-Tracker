@@ -357,7 +357,6 @@ export function DashboardView({
     .filter(
       (h) =>
         h.isOpenPosition &&
-        h.assetType !== "crypto" &&
         !h.isDelisted &&
         !h.priceNotFound &&
         !snapshot.quotes[h.symbol]?.priceNotFound,
@@ -366,16 +365,9 @@ export function DashboardView({
 
   const unpricedOpenHoldings = snapshot.holdings
     .filter((h) => h.isOpenPosition && h.unitPrice === null)
-    .sort((a, b) => {
-      const aCrypto = a.assetType === "crypto" ? 1 : 0;
-      const bCrypto = b.assetType === "crypto" ? 1 : 0;
-      if (aCrypto !== bCrypto) {
-        return aCrypto - bCrypto;
-      }
-      return a.symbol.localeCompare(b.symbol);
-    });
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
   const retryableNotFoundSymbols = unpricedOpenHoldings
-    .filter((h) => h.assetType !== "crypto" && !h.isDelisted)
+    .filter((h) => !h.isDelisted)
     .map((h) => h.symbol);
 
   const livePoll = useQuotesPoll({

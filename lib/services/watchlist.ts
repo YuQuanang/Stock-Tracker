@@ -367,9 +367,7 @@ async function hydrateSerializedWatchlistItem(
   }
 
   const skipFundamentals =
-    row.instr.assetType === "crypto" ||
-    row.instr.isDelisted ||
-    Boolean(row.instr.priceNotFoundAt);
+    row.instr.isDelisted || Boolean(row.instr.priceNotFoundAt);
   const [fundamentals, paperBenchmark] = await Promise.all([
     skipFundamentals
       ? Promise.resolve(null)
@@ -445,10 +443,7 @@ export async function getWatchlistPageSnapshot(options?: {
     ...new Set(
       joinedRows
         .filter(
-          (row) =>
-            row.instr.assetType !== "crypto" &&
-            !row.instr.isDelisted &&
-            !row.instr.priceNotFoundAt,
+          (row) => !row.instr.isDelisted && !row.instr.priceNotFoundAt,
         )
         .map((row) => row.instr.symbol),
     ),
@@ -605,7 +600,7 @@ export async function addWatchlistItem(
     "Price when added",
   );
 
-  if (priceWhenAdded === null && targetInstrument.assetType !== "crypto") {
+  if (priceWhenAdded === null) {
     const liveQuote = await fetchStockPrice(targetInstrument.symbol, {
       now,
       fetchImpl: options?.fetchImpl,

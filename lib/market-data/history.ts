@@ -23,6 +23,10 @@ import {
   MarketDataError,
 } from "@/lib/market-data/errors";
 import {
+  fetchExchangeRateToSgd,
+  getCachedUsdToSgdSnapshot,
+} from "@/lib/market-data/fx";
+import {
   getMarketSessionStatus,
   getSingaporeDateString,
   inferMarketRegion,
@@ -205,12 +209,45 @@ export function resolveStartDateForRange(
   }
 }
 
+async function resolveHistoryCryptoSgdScale(
+  fetchImpl?: typeof fetch,
+): Promise<number> {
+  const cached = getCachedUsdToSgdSnapshot();
+  if (cached) {
+    const num = Number(cached.rate);
+    if (Number.isFinite(num) && num > 0) {
+      return num;
+    }
+  }
+  try {
+    const snap = await fetchExchangeRateToSgd({
+      from: "USD",
+      fetchImpl,
+    });
+    const num = Number(snap.rate);
+    if (Number.isFinite(num) && num > 0) {
+      return num;
+    }
+  } catch {
+    // Fall back to standard USD/SGD rate if offline
+  }
+  return 1.35;
+}
+
 async function fetchYahooDailyBars(params: {
   symbol: string;
   startDate: string;
   endDate: string;
   fetchImpl?: typeof fetch;
 }): Promise<{ currency: string; bars: DailyBarRecord[] }> {
+  const sgdCryptoMatch = /^([A-Z0-9]{2,10})-SGD$/i.exec(params.symbol.trim());
+  const yahooSymbol = sgdCryptoMatch
+    ? `${sgdCryptoMatch[1].toUpperCase()}-USD`
+    : params.symbol;
+  const sgdCryptoScale = sgdCryptoMatch
+    ? await resolveHistoryCryptoSgdScale(params.fetchImpl)
+    : 1;
+
   const [sy, sm, sd] = params.startDate.split("-").map(Number);
   const [ey, em, ed] = params.endDate.split("-").map(Number);
   const period1 = Math.floor(Date.UTC(sy, sm - 1, sd, 0, 0, 0) / 1000) - 86400;
@@ -226,7 +263,7 @@ async function fetchYahooDailyBars(params: {
 
   for (const host of hosts) {
     const url = `https://${host}/v8/finance/chart/${encodeURIComponent(
-      params.symbol,
+      yahooSymbol,
     )}?interval=1d&period1=${period1}&period2=${period2}`;
 
     try {
@@ -274,10 +311,15 @@ async function fetchYahooDailyBars(params: {
     meta.exchangeTimezoneName ??
     (region === "SG" ? "Asia/Singapore" : "America/New_York");
   const isPence = meta.currency === "GBp" || meta.currency === "GBX";
-  const priceScale = isPence ? 0.01 : 1;
+  const priceScale = (isPence ? 0.01 : 1) * sgdCryptoScale;
   const rawCurUpper = (meta.currency ?? "").toUpperCase();
-  const currency =
-    rawCurUpper === "SGD" ? "SGD" : region === "SG" ? "SGD" : "USD";
+  const currency = sgdCryptoMatch
+    ? "SGD"
+    : rawCurUpper === "SGD"
+      ? "SGD"
+      : region === "SG"
+        ? "SGD"
+        : "USD";
 
   // Deduplicate by calendar date in exchange timezone (keeping latest bar per day).
   const byDate = new Map<string, DailyBarRecord>();
@@ -444,10 +486,18 @@ async function fetchYahooIntradaySeries(params: {
   now: Date;
   fetchImpl?: typeof fetch;
 }): Promise<PriceHistoryResult> {
+  const sgdCryptoMatch = /^([A-Z0-9]{2,10})-SGD$/i.exec(params.symbol.trim());
+  const yahooSymbol = sgdCryptoMatch
+    ? `${sgdCryptoMatch[1].toUpperCase()}-USD`
+    : params.symbol;
+  const sgdCryptoScale = sgdCryptoMatch
+    ? await resolveHistoryCryptoSgdScale(params.fetchImpl)
+    : 1;
+
   const interval = params.range === "1D" ? "5m" : "15m";
   const yahooRange = params.range === "1D" ? "1d" : "5d";
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    params.symbol,
+    yahooSymbol,
   )}?interval=${interval}&range=${yahooRange}`;
 
   const payload = await fetchProviderJson<YahooHistoryChartResponse>({
@@ -473,8 +523,13 @@ async function fetchYahooIntradaySeries(params: {
   const exchangeTz =
     meta.exchangeTimezoneName ??
     (region === "SG" ? "Asia/Singapore" : "America/New_York");
-  const currency =
-    (meta.currency ?? "").toUpperCase() || (region === "SG" ? "SGD" : "USD");
+  const isPence = meta.currency === "GBp" || meta.currency === "GBX";
+  const priceScale = (isPence ? 0.01 : 1) * sgdCryptoScale;
+  const currency = sgdCryptoMatch
+    ? "SGD"
+    : (meta.currency ?? "").toUpperCase() === "SGD" || region === "SG"
+      ? "SGD"
+      : "USD";
 
   const bars: HistoricalPricePoint[] = [];
   for (let i = 0; i < timestamps.length; i += 1) {
@@ -487,19 +542,32 @@ async function fetchYahooIntradaySeries(params: {
       continue;
     }
 
+    const rawOpen = quote.open?.[i];
+    const rawHigh = quote.high?.[i];
+    const rawLow = quote.low?.[i];
+
     bars.push({
       time: timestamps[i],
       date: toIsoDateInTimezone(timestamps[i], exchangeTz),
-      open: cleanOptionalPriceNumber(quote.open?.[i]),
-      high: cleanOptionalPriceNumber(quote.high?.[i]),
-      low: cleanOptionalPriceNumber(quote.low?.[i]),
-      close: toDecimalString(toDecimal(rawClose).toDecimalPlaces(6), 6),
+      open: cleanOptionalPriceNumber(
+        typeof rawOpen === "number" ? rawOpen * priceScale : rawOpen,
+      ),
+      high: cleanOptionalPriceNumber(
+        typeof rawHigh === "number" ? rawHigh * priceScale : rawHigh,
+      ),
+      low: cleanOptionalPriceNumber(
+        typeof rawLow === "number" ? rawLow * priceScale : rawLow,
+      ),
+      close: toDecimalString(
+        toDecimal(rawClose * priceScale).toDecimalPlaces(6),
+        6,
+      ),
       volume: cleanOptionalVolumeNumber(quote.volume?.[i]),
     });
   }
 
   return {
-    symbol: meta.symbol ?? params.symbol,
+    symbol: sgdCryptoMatch ? params.symbol.trim().toUpperCase() : (meta.symbol ?? params.symbol),
     currency,
     range: params.range,
     interval,
@@ -588,18 +656,6 @@ export async function ensureInstrumentDailyBars(
   const cleanSymbol = options.symbol.trim();
   const inferred = inferInstrumentMetadata({ symbol: cleanSymbol });
 
-  if (inferred.assetType === "crypto") {
-    return {
-      instrumentId: null,
-      currency: inferred.currency,
-      status: "unavailable",
-      unavailableReason:
-        "Crypto market-data fetching is disabled. Set a manual price override if needed.",
-      source: null,
-      bars: [],
-    };
-  }
-
   const database = options.db ?? (await getDb());
   const now = options.now ?? new Date();
   const endDate = options.endDate ?? getSingaporeDateString(now);
@@ -641,14 +697,12 @@ export async function ensureInstrumentDailyBars(
     };
   }
 
-  if (targetInstrument.assetType === "crypto" || targetInstrument.isDelisted) {
+  if (targetInstrument.isDelisted) {
     return {
       instrumentId: targetInstrument.id,
       currency: targetInstrument.currency,
       status: "unavailable",
-      unavailableReason: targetInstrument.isDelisted
-        ? "Instrument is marked delisted."
-        : "Crypto market-data fetching is disabled.",
+      unavailableReason: "Instrument is marked delisted.",
       source: null,
       bars: [],
     };
@@ -941,20 +995,6 @@ export async function fetchPriceHistoryForRange(params: {
 }): Promise<PriceHistoryResult> {
   const symbol = params.symbol.trim();
   const now = params.now ?? new Date();
-  const inferred = inferInstrumentMetadata({ symbol });
-
-  if (inferred.assetType === "crypto") {
-    return {
-      symbol,
-      currency: inferred.currency,
-      range: params.range,
-      interval: "1d",
-      status: "unavailable",
-      unavailableReason: "Crypto price fetching is disabled.",
-      source: null,
-      bars: [],
-    };
-  }
 
   const database = params.db ?? (await getDb());
   const existingRows = await database

@@ -20,8 +20,12 @@ async function migratePostgres(connectionString: string): Promise<void> {
   const { Pool } = await import("pg");
   const { drizzle } = await import("drizzle-orm/node-postgres");
   const { migrate } = await import("drizzle-orm/node-postgres/migrator");
+  const normalizedUrl = connectionString.replace(
+    /([?&]sslmode=)(?:require|prefer|verify-ca)(?=&|$)/gi,
+    "$1verify-full",
+  );
 
-  const pool = new Pool({ connectionString, max: 1 });
+  const pool = new Pool({ connectionString: normalizedUrl, max: 1 });
   try {
     await migrate(drizzle(pool), { migrationsFolder });
   } finally {

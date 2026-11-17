@@ -12,7 +12,10 @@ import {
   X,
 } from "lucide-react";
 import { MetricTooltip } from "@/components/analytics/metric-tooltip";
-import { BenchmarkComparisonChart } from "@/components/charts/benchmark-comparison-chart";
+import {
+  BENCH_RANGE_OPTIONS,
+  BenchmarkComparisonChart,
+} from "@/components/charts/benchmark-comparison-chart";
 import { DrawdownChart } from "@/components/charts/drawdown-chart";
 import { MoneyInvestedChart } from "@/components/charts/money-invested-chart";
 import { ButtonLink } from "@/components/ui/button-link";
@@ -1020,31 +1023,18 @@ export function BenchmarksView({
             layoutId="benchmarks-view-tab-seg"
           />
 
-          {activeBenchmarkObjects.length > 0 && (
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[12.5px]">
-              <label htmlFor="primary-benchmark-select" className="text-ink-2">
-                Focus fund:
-              </label>
-              <div className="relative inline-flex min-w-0 max-w-full items-center">
-                <select
-                  id="primary-benchmark-select"
-                  value={primaryBenchmark?.symbol ?? primarySymbol}
-                  onChange={(e) => setPrimarySymbol(e.target.value)}
-                  className="field-input h-8.5! max-w-full min-w-0 appearance-none bg-surface-2 pr-7! font-medium sm:text-[12.5px]"
-                >
-                  {activeBenchmarkObjects.map((b) => (
-                    <option key={b.symbol} value={b.symbol}>
-                      {b.name} ({b.displaySymbol})
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={14}
-                  className="pointer-events-none absolute right-2 text-ink-2"
-                  aria-hidden="true"
-                />
-              </div>
-            </div>
+          {viewTab === "same-cash-flows" && (
+            <SegmentedControl
+              ariaLabel="Benchmark chart time range"
+              size="sm"
+              options={BENCH_RANGE_OPTIONS.map((opt) => ({
+                value: opt,
+                label: opt,
+              }))}
+              value={cashFlowChartRange}
+              onChange={setCashFlowChartRange}
+              layoutId="benchmark-range-seg"
+            />
           )}
         </div>
 
@@ -1205,6 +1195,7 @@ export function BenchmarksView({
                 primaryBenchmark={primaryBenchmark}
                 range={cashFlowChartRange}
                 onRangeChange={setCashFlowChartRange}
+                hideRangeSelector
               />
               <MoneyInvestedChart
                 points={snapshot.timeline.points}

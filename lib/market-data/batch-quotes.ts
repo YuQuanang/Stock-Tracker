@@ -287,30 +287,7 @@ export async function resolveQuotesForSymbols(
         };
       }
 
-      // 3. Crypto without manual override -> never fetch external crypto prices
-      if (inferred.assetType === "crypto") {
-        return {
-          symbol,
-          name: dbInstr?.name ?? null,
-          currency: inferred.currency,
-          exchangeCode: inferred.exchangeCode,
-          assetType: "crypto",
-          price: null,
-          previousClose: null,
-          dayChange: null,
-          dayChangePercent: null,
-          status: "unavailable",
-          freshnessLabel: "Price unavailable",
-          unavailableReason:
-            "Crypto price fetching is disabled. Enter a manual price or mark as worthless.",
-          asOf: null,
-          effectiveDate: null,
-          source: null,
-          sparklineCloses,
-        };
-      }
-
-      // 3.5. Persistently known not-found symbols (unless explicit Retry / skipCache)
+      // 3. Persistently known not-found symbols (unless explicit Retry / skipCache)
       const hasPersistedNotFound =
         dbInstr?.priceNotFoundAt !== null && dbInstr?.priceNotFoundAt !== undefined;
       if (hasPersistedNotFound && !options.skipCache && !options.retryNotFound) {

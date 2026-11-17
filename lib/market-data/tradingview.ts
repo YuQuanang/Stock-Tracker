@@ -21,6 +21,7 @@ import type { SymbolSearchMatch } from "@/lib/market-data/search";
 const TV_SGX_SCAN_URL = "https://scanner.tradingview.com/singapore/scan";
 const TV_US_SCAN_URL = "https://scanner.tradingview.com/america/scan";
 const TV_UK_SCAN_URL = "https://scanner.tradingview.com/uk/scan";
+const TV_CRYPTO_SCAN_URL = "https://scanner.tradingview.com/crypto/scan";
 const TV_GLOBAL_SCAN_URL = "https://scanner.tradingview.com/global/scan";
 const TV_SYMBOL_SEARCH_URL =
   "https://symbol-search.tradingview.com/symbol_search/v3/";
@@ -86,6 +87,7 @@ const SCAN_COLUMNS_FUNDAMENTALS = [
   "type",
   "subtype",
   "aum",
+  "market_cap_calc",
 ] as const;
 
 const SCAN_COLUMNS_VERIFY = [
@@ -343,6 +345,18 @@ function resolveTradingViewFundamentalsTargets(rawSymbol: string): {
       tickers: [`LSE:${upper.slice(0, -2)}`],
     };
   }
+  const cryptoMatch = /^([A-Z0-9]{2,10})-(USD|SGD)$/i.exec(upper);
+  if (cryptoMatch) {
+    const coin = cryptoMatch[1];
+    return {
+      endpoint: TV_CRYPTO_SCAN_URL,
+      tickers: [
+        `CRYPTO:${coin}USD`,
+        `COINBASE:${coin}USD`,
+        `BINANCE:${coin}USDT`,
+      ],
+    };
+  }
   const tvSym = upper.replace(/-/g, ".");
   return {
     endpoint: TV_US_SCAN_URL,
@@ -400,7 +414,8 @@ export async function fetchFundamentalsViaTradingView(
 
     const marketCapOrAum =
       safePositiveDecimalString(row[3], 0) ??
-      safePositiveDecimalString(row[15], 0);
+      safePositiveDecimalString(row[15], 0) ??
+      safePositiveDecimalString(row[16], 0);
 
     const rawHigh =
       typeof row[7] === "number" && Number.isFinite(row[7])

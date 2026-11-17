@@ -575,9 +575,7 @@ export async function getStockDetailSnapshot(
       now,
       includeSparklines: true,
     }),
-    targetInstr.assetType === "crypto" ||
-    targetInstr.isDelisted ||
-    Boolean(targetInstr.priceNotFoundAt)
+    targetInstr.isDelisted || Boolean(targetInstr.priceNotFoundAt)
       ? Promise.resolve({
           symbol: targetInstr.symbol,
           name: targetInstr.name,

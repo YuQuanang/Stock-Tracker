@@ -18,6 +18,10 @@ import { getEnv } from "@/lib/env";
 import { toDecimal, toDecimalString } from "@/lib/finance/decimal";
 import { TtlCache } from "@/lib/market-data/cache";
 import { fetchProviderJson, MarketDataError } from "@/lib/market-data/errors";
+import {
+  fetchExchangeRateToSgd,
+  getCachedUsdToSgdSnapshot,
+} from "@/lib/market-data/fx";
 import { inferMarketRegion } from "@/lib/market-data/hours";
 import { fetchFundamentalsViaTradingView } from "@/lib/market-data/tradingview";
 import { inferInstrumentMetadata } from "@/lib/symbols";
@@ -140,7 +144,7 @@ export async function fetchInstrumentFundamentals(
   const now = options.now ?? new Date();
   const inferred = inferInstrumentMetadata({ symbol });
 
-  if (!symbol || inferred.assetType === "crypto") {
+  if (!symbol) {
     return {
       symbol,
       name: null,
@@ -181,9 +185,38 @@ export async function fetchInstrumentFundamentals(
     const sourcesUsed: string[] = [];
 
     // 1. Yahoo 1Y chart metadata + computed 52-week range, 30-day avg volume & TTM dividend yield
+    const sgdCryptoMatch = /^([A-Z0-9]{2,10})-SGD$/i.exec(symbol);
+    const yahooSymbol = sgdCryptoMatch
+      ? `${sgdCryptoMatch[1].toUpperCase()}-USD`
+      : symbol;
+    let sgdCryptoScale = 1;
+    if (sgdCryptoMatch) {
+      const cachedFx = getCachedUsdToSgdSnapshot();
+      if (cachedFx) {
+        const parsed = Number(cachedFx.rate);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          sgdCryptoScale = parsed;
+        }
+      } else {
+        try {
+          const snap = await fetchExchangeRateToSgd({
+            from: "USD",
+            now,
+            fetchImpl: options.fetchImpl,
+          });
+          const parsed = Number(snap.rate);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            sgdCryptoScale = parsed;
+          }
+        } catch {
+          sgdCryptoScale = 1.35;
+        }
+      }
+    }
+
     try {
       const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        symbol,
+        yahooSymbol,
       )}?interval=1d&range=1y&events=div`;
 
       const chart = await fetchProviderJson<YahooYearChartResponse>({
@@ -196,13 +229,15 @@ export async function fetchInstrumentFundamentals(
       const meta = res?.meta;
       const quote = res?.indicators?.quote?.[0];
       const isPence = meta?.currency === "GBp" || meta?.currency === "GBX";
-      const scale = isPence ? 0.01 : 1;
+      const scale = (isPence ? 0.01 : 1) * sgdCryptoScale;
 
       if (meta) {
         sourcesUsed.push("yahoo");
         name = meta.longName ?? meta.shortName ?? null;
         yahooInstrumentType = (meta.instrumentType ?? "").toUpperCase();
-        if (meta.currency) {
+        if (sgdCryptoMatch) {
+          currency = "SGD";
+        } else if (meta.currency) {
           const upperCur = meta.currency.toUpperCase();
           currency = upperCur === "SGD" ? "SGD" : "USD";
         }
@@ -407,7 +442,7 @@ export async function fetchInstrumentFundamentals(
         if (!name && tv.name) {
           name = tv.name;
         }
-        if (tv.currency) {
+        if (!sgdCryptoMatch && tv.currency) {
           currency = tv.currency;
         }
         if (!exchangeName && symbol.toUpperCase().endsWith(".SI")) {
@@ -416,7 +451,14 @@ export async function fetchInstrumentFundamentals(
           exchangeName = "LSE";
         }
         if (!marketCap && tv.marketCap) {
-          marketCap = tv.marketCap;
+          marketCap = sgdCryptoMatch
+            ? toDecimalString(
+                toDecimal(tv.marketCap)
+                  .mul(sgdCryptoScale)
+                  .toDecimalPlaces(0),
+                0,
+              )
+            : tv.marketCap;
         }
         if (!peTrailing && tv.peTrailing) {
           peTrailing = tv.peTrailing;
@@ -425,10 +467,24 @@ export async function fetchInstrumentFundamentals(
           dividendYieldPercent = tv.dividendYieldPercent;
         }
         if (!fiftyTwoWeekHigh && tv.fiftyTwoWeekHigh) {
-          fiftyTwoWeekHigh = tv.fiftyTwoWeekHigh;
+          fiftyTwoWeekHigh = sgdCryptoMatch
+            ? toDecimalString(
+                toDecimal(tv.fiftyTwoWeekHigh)
+                  .mul(sgdCryptoScale)
+                  .toDecimalPlaces(4),
+                4,
+              )
+            : tv.fiftyTwoWeekHigh;
         }
         if (!fiftyTwoWeekLow && tv.fiftyTwoWeekLow) {
-          fiftyTwoWeekLow = tv.fiftyTwoWeekLow;
+          fiftyTwoWeekLow = sgdCryptoMatch
+            ? toDecimalString(
+                toDecimal(tv.fiftyTwoWeekLow)
+                  .mul(sgdCryptoScale)
+                  .toDecimalPlaces(4),
+                4,
+              )
+            : tv.fiftyTwoWeekLow;
         }
         if (!beta && tv.beta) {
           beta = tv.beta;
@@ -449,13 +505,19 @@ export async function fetchInstrumentFundamentals(
       dividendYieldPercent = computedTtmDivYield;
     }
 
+    const isCrypto =
+      inferred.assetType === "crypto" ||
+      yahooInstrumentType === "CRYPTOCURRENCY";
     const isEtfOrFund =
       yahooInstrumentType === "ETF" ||
       inferred.assetType === "etf" ||
       /\b(etf|ucits)\b/i.test(name ?? "");
 
     if (!sector && !industry) {
-      if (isEtfOrFund) {
+      if (isCrypto) {
+        sector = "Digital Assets";
+        industry = "Cryptocurrency";
+      } else if (isEtfOrFund) {
         sector = "Exchange-Traded Fund";
         industry = "ETF";
       } else if (
@@ -467,8 +529,11 @@ export async function fetchInstrumentFundamentals(
       }
     }
 
-    if (!beta && isEtfOrFund) {
+    if (!beta && (isEtfOrFund || isCrypto)) {
       beta = "1.00";
+    }
+    if (!dividendYieldPercent && isCrypto) {
+      dividendYieldPercent = "0.00";
     }
 
     if (sourcesUsed.length === 0) {

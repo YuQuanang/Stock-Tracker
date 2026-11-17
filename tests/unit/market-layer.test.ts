@@ -272,7 +272,7 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
     expect(offlineRead.status).toBe("stale_cache");
     expect(offlineRead.bars).toHaveLength(2);
 
-    // Crypto history never calls external providers
+    // Crypto history fetches and persists daily bars cleanly
     const cryptoRead = await ensureInstrumentDailyBars({
       symbol: "UST-USD",
       startDate: "2026-01-01",
@@ -281,12 +281,12 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
       now: saturday,
       fetchImpl: yahooHistoryMock,
     });
-    expect(cryptoRead.status).toBe("unavailable");
-    expect(cryptoRead.bars).toHaveLength(0);
-    expect(networkCalls).toBe(1);
+    expect(cryptoRead.status).toBe("ok");
+    expect(cryptoRead.bars).toHaveLength(2);
+    expect(networkCalls).toBe(2);
   });
 
-  it("caches company fundamentals for 24 hours and skips crypto symbols", async () => {
+  it("caches company and crypto fundamentals for 24 hours", async () => {
     let calls = 0;
     const mockFetch: typeof fetch = async (input) => {
       calls += 1;
@@ -372,12 +372,12 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
     expect(second.fiftyTwoWeekHigh).toBe("3.88");
     expect(calls).toBe(2);
 
-    // Crypto immediately returns unavailable with 0 network calls
+    // Crypto symbols also fetch fundamentals and classify as Digital Assets
     const crypto = await fetchInstrumentFundamentals("ETH-SGD", {
       fetchImpl: mockFetch,
     });
-    expect(crypto.status).toBe("unavailable");
-    expect(calls).toBe(2);
+    expect(crypto.status).toBe("ok");
+    expect(crypto.currency).toBe("SGD");
   });
 
   it("resolves batch quotes with exact dayChange math, manual/delisted overrides, crypto exclusion, and labelled offline fallback", async () => {
@@ -458,10 +458,10 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
       freshnessLabel: "Last close, 6 Nov",
     });
 
-    // 2. UST-USD (unpriced crypto) -> unavailable, zero external requests for UST-USD
+    // 2. UST-USD (unpriced crypto returning 404) -> unavailable
     expect(batch["UST-USD"].status).toBe("unavailable");
     expect(batch["UST-USD"].price).toBeNull();
-    expect(requestedUrls.some((u) => u.includes("UST-USD"))).toBe(false);
+    expect(requestedUrls.some((u) => u.includes("UST-USD"))).toBe(true);
 
     // 3. HIBB (delisted) -> $0 delisted override
     expect(batch.HIBB.status).toBe("delisted");

@@ -172,7 +172,6 @@ export function StockDetailView({
       symbols: [instrument.symbol],
       includeSparklines: true,
       enabled:
-        instrument.assetType !== "crypto" &&
         !instrument.isDelisted &&
         !instrument.priceNotFound &&
         !initialQuote?.priceNotFound &&
@@ -971,10 +970,13 @@ export function StockDetailView({
               <dd className="num font-medium text-ink">
                 {fundamentals.peTrailing
                   ? Number(fundamentals.peTrailing).toFixed(2)
-                  : instrument.assetType === "etf" ||
-                      fundamentals.industry === "ETF"
-                    ? "N/A (ETF)"
-                    : "—"}
+                  : instrument.assetType === "crypto" ||
+                      fundamentals.industry === "Cryptocurrency"
+                    ? "N/A (Crypto)"
+                    : instrument.assetType === "etf" ||
+                        fundamentals.industry === "ETF"
+                      ? "N/A (ETF)"
+                      : "—"}
               </dd>
             </div>
 

@@ -147,7 +147,27 @@ function mapTwelveDataRow(row: {
     return null;
   }
 
-  // Keep equities, ETFs, REITs, ADRs, and trusts; skip crypto/forex/futures.
+  // Keep equities, ETFs, REITs, ADRs, trusts, and USD/SGD crypto pairs.
+  const isCryptoPair =
+    typeLower.includes("digital currency") ||
+    typeLower.includes("crypto") ||
+    /^[A-Z0-9]{2,10}[/-](USD|SGD)$/i.test(rawSymbol);
+  if (isCryptoPair) {
+    const normalizedCrypto = rawSymbol.toUpperCase().replace("/", "-");
+    if (!/^[A-Z0-9]{2,10}-(USD|SGD)$/.test(normalizedCrypto)) {
+      return null;
+    }
+    const isSgdCrypto = normalizedCrypto.endsWith("-SGD");
+    return {
+      symbol: normalizedCrypto,
+      name: name.replace(/\/(US Dollar|Singapore Dollar)$/i, "").trim() || name,
+      exchangeCode: "CCC",
+      exchangeDisplay: "Crypto",
+      currency: isSgdCrypto ? "SGD" : "USD",
+      quoteType: "EQUITY",
+    };
+  }
+
   const isStockOrFund =
     typeLower.includes("stock") ||
     typeLower.includes("etf") ||
@@ -344,11 +364,16 @@ async function searchViaYahoo(
     const isAllowedType =
       rawType === "EQUITY" ||
       rawType === "ETF" ||
+      rawType === "CRYPTOCURRENCY" ||
       (allowIndices && rawType === "INDEX");
     if (!isAllowedType) {
       continue;
     }
 
+    const isCrypto =
+      rawType === "CRYPTOCURRENCY" ||
+      rawExch === "CCC" ||
+      /^[A-Z0-9]{2,10}-(USD|SGD)$/i.test(symbol);
     const isSgx =
       symbol.toUpperCase().endsWith(".SI") ||
       rawExch === "SES" ||
@@ -359,7 +384,7 @@ async function searchViaYahoo(
       rawExch === "LON" ||
       rawExch === "IOB";
     const isUs = US_EXCHANGE_CODES.has(rawExch);
-    if (!isSgx && !isLse && !isUs) {
+    if (!isSgx && !isLse && !isUs && !isCrypto) {
       continue;
     }
 
@@ -367,14 +392,26 @@ async function searchViaYahoo(
     results.push({
       symbol,
       name: officialName,
-      exchangeCode: isSgx ? "SES" : isLse ? "LSE" : rawExch,
+      exchangeCode: isSgx
+        ? "SES"
+        : isLse
+          ? "LSE"
+          : isCrypto
+            ? "CCC"
+            : rawExch,
       exchangeDisplay: isSgx
         ? "SGX"
         : isLse
           ? "LSE"
-          : (EXCHANGE_DISPLAY_NAMES[rawExch] ?? (item.exchDisp || rawExch)),
-      currency: isSgx ? "SGD" : "USD",
-      quoteType: rawType as "EQUITY" | "ETF" | "INDEX",
+          : isCrypto
+            ? "Crypto"
+            : (EXCHANGE_DISPLAY_NAMES[rawExch] ?? (item.exchDisp || rawExch)),
+      currency:
+        isSgx || symbol.toUpperCase().endsWith("-SGD") ? "SGD" : "USD",
+      quoteType:
+        rawType === "CRYPTOCURRENCY"
+          ? "EQUITY"
+          : (rawType as "EQUITY" | "ETF" | "INDEX"),
     });
   }
 

@@ -27,9 +27,10 @@ interface BenchmarkComparisonChartProps {
   primaryBenchmark: BenchmarkSeriesData | null;
   range?: AnalyticsChartRange;
   onRangeChange?: (nextRange: AnalyticsChartRange) => void;
+  hideRangeSelector?: boolean;
 }
 
-const BENCH_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
+export const BENCH_RANGE_OPTIONS: readonly AnalyticsChartRange[] = [
   "3M",
   "6M",
   "YTD",
@@ -83,6 +84,7 @@ export function BenchmarkComparisonChart({
   primaryBenchmark,
   range: controlledRange,
   onRangeChange,
+  hideRangeSelector = false,
 }: BenchmarkComparisonChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { palette, themeTick } = useChartThemePalette();
@@ -304,104 +306,137 @@ export function BenchmarkComparisonChart({
       .map((f) => f.displaySymbol) ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3.5">
       <div className="space-y-2.5">
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
-          <p className="text-[12px] text-ink-2 whitespace-nowrap">
-            {hovered ? (
-              <>
-                As of <span className="font-mono">{hovered.date}</span>
-              </>
-            ) : (
-              <>
-                {range} period
-                {firstDate && latestDate ? (
-                  <>
-                    {" · "}
-                    <span className="font-mono">
-                      {firstDate} → {latestDate}
-                    </span>
-                  </>
-                ) : latestDate ? (
-                  <>
-                    {" · latest "}
-                    <span className="font-mono">{latestDate}</span>
-                  </>
-                ) : (
-                  ""
-                )}
-              </>
-            )}
-          </p>
-
-          <SegmentedControl
-            ariaLabel="Benchmark chart time range"
-            size="sm"
-            options={BENCH_RANGE_OPTIONS.map((opt) => ({
-              value: opt,
-              label: opt,
-            }))}
-            value={range}
-            onChange={setRange}
-            layoutId="benchmark-range-seg"
-          />
-        </div>
-
-        <div className="min-h-[26px] flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12.5px]">
-          {simulationModel && (
-            <>
-              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: palette.accent }}
-                />
-                <span className="font-medium text-ink">Your Portfolio</span>
-                <span className="num text-ink-2">
-                  {formatMoney(
-                    hovered?.values.portfolio ??
-                      simulationModel.baselineSummary.portfolioFinalValue,
-                    currency,
+        {!hideRangeSelector && (
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <p className="text-[12px] text-ink-2 whitespace-nowrap">
+              {hovered ? (
+                <>
+                  As of <span className="font-mono">{hovered.date}</span>
+                </>
+              ) : (
+                <>
+                  {range} period
+                  {firstDate && latestDate ? (
+                    <>
+                      {" · "}
+                      <span className="font-mono">
+                        {firstDate} → {latestDate}
+                      </span>
+                    </>
+                  ) : latestDate ? (
+                    <>
+                      {" · latest "}
+                      <span className="font-mono">{latestDate}</span>
+                    </>
+                  ) : (
+                    ""
                   )}
-                </span>
-              </span>
+                </>
+              )}
+            </p>
 
-              {simulationModel.funds.map((fund) => (
-                <span
-                  key={fund.symbol}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap"
-                >
+            <SegmentedControl
+              ariaLabel="Benchmark chart time range"
+              size="sm"
+              options={BENCH_RANGE_OPTIONS.map((opt) => ({
+                value: opt,
+                label: opt,
+              }))}
+              value={range}
+              onChange={setRange}
+              layoutId="benchmark-range-seg"
+            />
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-[10px] border border-line bg-surface-2 px-3.5 py-2 text-[12.5px]">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {simulationModel && (
+              <>
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                   <span
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: fund.color }}
+                    style={{ backgroundColor: palette.accent }}
                   />
-                  <span
-                    className="font-medium text-ink"
-                    title={`total return, dividends reinvested, ${currency}`}
-                  >
-                    {fund.displaySymbol}
-                  </span>
-                  <span className="num text-ink-2">
+                  <span className="font-medium text-ink">Your Portfolio</span>
+                  <span className="num font-medium text-ink-2">
                     {formatMoney(
-                      hovered?.values[`bench:${fund.symbol}`] ??
-                        fund.summary.benchmarkFinalValue,
+                      hovered?.values.portfolio ??
+                        simulationModel.baselineSummary.portfolioFinalValue,
                       currency,
                     )}
                   </span>
                 </span>
-              ))}
 
-              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-3">
-                <span className="h-1.5 w-3 border-t-2 border-dashed border-ink-3" />
-                Net contributed{" "}
-                <span className="num font-medium text-ink-2">
-                  {formatMoney(
-                    hovered?.values.netContributed ??
-                      simulationModel.baselineSummary.netContributed,
-                    currency,
-                  )}
+                {simulationModel.funds.map((fund) => (
+                  <span
+                    key={fund.symbol}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: fund.color }}
+                    />
+                    <span
+                      className="font-medium text-ink"
+                      title={`total return, dividends reinvested, ${currency}`}
+                    >
+                      {fund.displaySymbol}
+                    </span>
+                    <span className="num text-ink-2">
+                      {formatMoney(
+                        hovered?.values[`bench:${fund.symbol}`] ??
+                          fund.summary.benchmarkFinalValue,
+                        currency,
+                      )}
+                    </span>
+                  </span>
+                ))}
+
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-ink-3">
+                  <span className="h-1.5 w-3 border-t-2 border-dashed border-ink-3" />
+                  Net contributed{" "}
+                  <span className="num font-medium text-ink-2">
+                    {formatMoney(
+                      hovered?.values.netContributed ??
+                        simulationModel.baselineSummary.netContributed,
+                      currency,
+                    )}
+                  </span>
                 </span>
-              </span>
-            </>
+              </>
+            )}
+          </div>
+
+          {hideRangeSelector && (
+            <span className="whitespace-nowrap text-[11.5px] text-ink-3">
+              {hovered ? (
+                <>
+                  As of <span className="font-mono text-ink-2">{hovered.date}</span>
+                </>
+              ) : (
+                <>
+                  {range}
+                  {firstDate && latestDate ? (
+                    <>
+                      {" · "}
+                      <span className="font-mono">
+                        {firstDate} → {latestDate}
+                      </span>
+                    </>
+                  ) : latestDate ? (
+                    <>
+                      {" · "}
+                      <span className="font-mono">{latestDate}</span>
+                    </>
+                  ) : (
+                    ""
+                  )}
+                </>
+              )}
+            </span>
           )}
         </div>
       </div>
@@ -421,30 +456,15 @@ export function BenchmarkComparisonChart({
 
       {simulationModel && (
         <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-[13.5px] font-semibold text-ink">
-                Side-by-Side Same Cash Flows ({currency})
-              </h3>
-              <p className="text-[12px] text-ink-3">
-                Every buy and sell mirrored into each toggled fund using
-                dividend-adjusted closes (total return, dividends reinvested,{" "}
-                {currency}).
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <GainBadge
-                amount={simulationModel.focusFund.summary.excessGain}
-                currency={currency}
-                size="sm"
-                pill
-              />
-              <span className="text-[12px] text-ink-2">
-                {simulationModel.focusFund.summary.benchmarkOutperformed
-                  ? `ahead of ${simulationModel.focusFund.displaySymbol}`
-                  : `behind ${simulationModel.focusFund.displaySymbol}`}
-              </span>
-            </div>
+          <div>
+            <h3 className="text-[13.5px] font-semibold text-ink">
+              Side-by-Side Same Cash Flows ({currency})
+            </h3>
+            <p className="text-[12px] text-ink-3">
+              Every buy and sell mirrored into each toggled fund using
+              dividend-adjusted closes (total return, dividends reinvested,{" "}
+              {currency}).
+            </p>
           </div>
 
           <div className="overflow-x-auto">

@@ -37,11 +37,18 @@ type GlobalWithDatabase = typeof globalThis & {
 
 const globalScope = globalThis as GlobalWithDatabase;
 
+export function normalizePostgresSslMode(connectionString: string): string {
+  return connectionString.replace(
+    /([?&]sslmode=)(?:require|prefer|verify-ca)(?=&|$)/gi,
+    "$1verify-full",
+  );
+}
+
 async function createPostgresDatabase(connectionString: string): Promise<Database> {
   // A tiny pool: serverless functions are short-lived, and hosted free tiers
   // have low connection limits. Use the provider's *pooled* connection string.
   const pool = new Pool({
-    connectionString,
+    connectionString: normalizePostgresSslMode(connectionString),
     max: 3,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 15_000,

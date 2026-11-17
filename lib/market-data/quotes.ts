@@ -18,6 +18,10 @@ import {
   MarketDataError,
 } from "@/lib/market-data/errors";
 import {
+  fetchExchangeRateToSgd,
+  getCachedUsdToSgdSnapshot,
+} from "@/lib/market-data/fx";
+import {
   formatShortMarketDate,
   getMarketSessionStatus,
   getSingaporeDateString,
@@ -118,13 +122,50 @@ function toIsoDateInTimezone(unixSeconds: number, timeZone: string): string {
   return formatter.format(new Date(unixSeconds * 1000));
 }
 
+async function resolveCryptoSgdFxScale(
+  now: Date,
+  fetchImpl?: typeof fetch,
+  date?: string,
+): Promise<number> {
+  const cached = getCachedUsdToSgdSnapshot();
+  if (cached && !date) {
+    const num = Number(cached.rate);
+    if (Number.isFinite(num) && num > 0) {
+      return num;
+    }
+  }
+  try {
+    const snap = await fetchExchangeRateToSgd({
+      from: "USD",
+      date,
+      now,
+      fetchImpl,
+    });
+    const num = Number(snap.rate);
+    if (Number.isFinite(num) && num > 0) {
+      return num;
+    }
+  } catch {
+    // Fall back to cached or standard USD/SGD rate if FX endpoint is offline
+  }
+  return 1.35;
+}
+
 async function fetchLatestViaYahoo(
   symbol: string,
   now: Date,
   fetchImpl?: typeof fetch,
 ): Promise<StockPriceQuote> {
+  const sgdCryptoMatch = /^([A-Z0-9]{2,10})-SGD$/i.exec(symbol.trim());
+  const yahooSymbol = sgdCryptoMatch
+    ? `${sgdCryptoMatch[1].toUpperCase()}-USD`
+    : symbol;
+  const sgdCryptoScale = sgdCryptoMatch
+    ? await resolveCryptoSgdFxScale(now, fetchImpl)
+    : 1;
+
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    symbol,
+    yahooSymbol,
   )}?interval=1d&range=5d`;
 
   const payload = await fetchProviderJson<YahooChartResponse>({
@@ -152,7 +193,7 @@ async function fetchLatestViaYahoo(
     (meta.exchangeName ?? "").toUpperCase() === "LSE" ||
     (meta.exchangeName ?? "").toUpperCase() === "IOB";
   const isPence = meta.currency === "GBp" || meta.currency === "GBX";
-  const priceScale = isPence ? 0.01 : 1;
+  const priceScale = (isPence ? 0.01 : 1) * sgdCryptoScale;
   const rawCurrency = (meta.currency ?? "").toUpperCase();
   if (
     rawCurrency !== "USD" &&
@@ -166,7 +207,7 @@ async function fetchLatestViaYahoo(
     );
   }
   const normalizedCurrency: "USD" | "SGD" =
-    rawCurrency === "SGD" ? "SGD" : "USD";
+    sgdCryptoMatch || rawCurrency === "SGD" ? "SGD" : "USD";
 
   const region = inferMarketRegion(meta.symbol ?? symbol, meta.exchangeName);
   const session = getMarketSessionStatus(region, now);
@@ -250,15 +291,17 @@ async function fetchLatestViaYahoo(
   }
 
   return {
-    symbol: meta.symbol ?? symbol,
+    symbol: sgdCryptoMatch ? symbol.trim().toUpperCase() : (meta.symbol ?? symbol),
     price: toDecimalString(toDecimal(meta.regularMarketPrice * priceScale), 6),
     previousClose,
     currency: normalizedCurrency,
     exchangeCode: isLse
       ? "LSE"
-      : region === "SG"
-        ? "SES"
-        : (meta.exchangeName ?? "NMS").toUpperCase(),
+      : sgdCryptoMatch
+        ? "CCC"
+        : region === "SG"
+          ? "SES"
+          : (meta.exchangeName ?? "NMS").toUpperCase(),
     asOf: asOfDate.toISOString(),
     effectiveDate,
     priceStatus,
@@ -344,8 +387,16 @@ async function fetchHistoricalViaYahoo(
   const period2 = Math.floor(targetEndUtc / 1000) + 86400;
   const period1 = period2 - 12 * 86400;
 
+  const sgdCryptoMatch = /^([A-Z0-9]{2,10})-SGD$/i.exec(symbol.trim());
+  const yahooSymbol = sgdCryptoMatch
+    ? `${sgdCryptoMatch[1].toUpperCase()}-USD`
+    : symbol;
+  const sgdCryptoScale = sgdCryptoMatch
+    ? await resolveCryptoSgdFxScale(now, fetchImpl, targetDate)
+    : 1;
+
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    symbol,
+    yahooSymbol,
   )}?interval=1d&period1=${period1}&period2=${period2}`;
 
   const payload = await fetchProviderJson<YahooChartResponse>({
@@ -372,7 +423,7 @@ async function fetchHistoricalViaYahoo(
     (meta.exchangeName ?? "").toUpperCase() === "LSE" ||
     (meta.exchangeName ?? "").toUpperCase() === "IOB";
   const isPence = meta.currency === "GBp" || meta.currency === "GBX";
-  const priceScale = isPence ? 0.01 : 1;
+  const priceScale = (isPence ? 0.01 : 1) * sgdCryptoScale;
   const rawCurrency = (meta.currency ?? "").toUpperCase();
   if (
     rawCurrency !== "USD" &&
@@ -386,7 +437,7 @@ async function fetchHistoricalViaYahoo(
     );
   }
   const normalizedCurrency: "USD" | "SGD" =
-    rawCurrency === "SGD" ? "SGD" : "USD";
+    sgdCryptoMatch || rawCurrency === "SGD" ? "SGD" : "USD";
 
   const region = inferMarketRegion(meta.symbol ?? symbol, meta.exchangeName);
   const exchangeTimeZone =
@@ -431,15 +482,17 @@ async function fetchHistoricalViaYahoo(
   const cleanedClose = toDecimal(chosenClose * priceScale).toDecimalPlaces(4);
   const referenceYear = Number(getSingaporeDateString(now).slice(0, 4));
   return {
-    symbol: meta.symbol ?? symbol,
+    symbol: sgdCryptoMatch ? symbol.trim().toUpperCase() : (meta.symbol ?? symbol),
     price: toDecimalString(cleanedClose, 4),
     previousClose: null,
     currency: normalizedCurrency,
     exchangeCode: isLse
       ? "LSE"
-      : region === "SG"
-        ? "SES"
-        : (meta.exchangeName ?? "NMS").toUpperCase(),
+      : sgdCryptoMatch
+        ? "CCC"
+        : region === "SG"
+          ? "SES"
+          : (meta.exchangeName ?? "NMS").toUpperCase(),
     asOf: new Date(chosenTimestamp * 1000).toISOString(),
     effectiveDate: chosenDate,
     priceStatus: "historical",

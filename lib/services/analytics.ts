@@ -667,10 +667,7 @@ export async function computePortfolioAnalytics(
 
   const portfolioSymbolsToFetch = [
     ...portfolioInstrumentDateBounds.values(),
-  ].filter(
-    (item) =>
-      item.assetType !== "crypto" && !item.isDelisted && !item.isNotFound,
-  );
+  ].filter((item) => !item.isDelisted && !item.isNotFound);
 
   const includeBenchmarks = options.includeBenchmarks ?? true;
   const benchmarkSymbolsToFetch = includeBenchmarks ? requestedBenchmarks : [];
@@ -703,7 +700,6 @@ export async function computePortfolioAnalytics(
         .filter(
           (b) =>
             toDecimal(b.sharesHeld).gt(ZERO) &&
-            b.assetType !== "crypto" &&
             !b.isDelisted &&
             !b.priceNotFound,
         )

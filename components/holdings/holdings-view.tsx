@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import {
+  ArrowDown,
   ArrowRightLeft,
+  ArrowUp,
+  ArrowUpDown,
   Briefcase,
   ChevronDown,
   ChevronRight,
@@ -50,7 +53,17 @@ import type { LedgerPositionSummary } from "@/lib/services/ledger";
 import { formatExchangeCodeForDisplay } from "@/lib/transactions/form-logic";
 
 type PositionTab = "open" | "closed";
-type SortField = "value" | "unrealized" | "totalReturn" | "dayChange" | "symbol";
+type SortField =
+  | "default"
+  | "symbol"
+  | "shares"
+  | "price"
+  | "value"
+  | "dayChange"
+  | "unrealized"
+  | "totalReturn"
+  | "weight";
+type SortDirection = "asc" | "desc";
 
 interface HoldingsViewProps {
   portfolios: Portfolio[];
@@ -102,7 +115,8 @@ export function HoldingsView({
 
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<PositionTab>("open");
-  const [sortField, setSortField] = useState<SortField>("value");
+  const [sortField, setSortField] = useState<SortField>("default");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [searchQuery, setSearchQuery] = useState("");
   const [isTxSheetOpen, setIsTxSheetOpen] = useState(false);
   const [isPortfolioSheetOpen, setIsPortfolioSheetOpen] = useState(false);
@@ -125,7 +139,6 @@ export function HoldingsView({
     for (const b of buckets) {
       if (
         Number(b.sharesHeld) > 0 &&
-        b.assetType !== "crypto" &&
         !b.isDelisted &&
         !b.priceNotFound &&
         !initialQuotes[b.symbol]?.priceNotFound
@@ -211,49 +224,140 @@ export function HoldingsView({
       return true;
     });
 
-    function numVal(raw: string | null): number {
-      if (raw === null) {
+    function numVal(raw: string | number | null | undefined): number {
+      if (raw === null || raw === undefined) {
         return Number.NEGATIVE_INFINITY;
       }
       const parsed = Number(raw);
       return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
     }
 
+    function compareNums(
+      leftRaw: string | number | null | undefined,
+      rightRaw: string | number | null | undefined,
+      dir: SortDirection,
+    ): number {
+      const left = numVal(leftRaw);
+      const right = numVal(rightRaw);
+      if (left === right) return 0;
+      if (left === Number.NEGATIVE_INFINITY) return 1;
+      if (right === Number.NEGATIVE_INFINITY) return -1;
+      return dir === "asc" ? left - right : right - left;
+    }
+
     return [...filtered].sort((a, b) => {
       if (sortField === "symbol") {
-        return a.symbol.localeCompare(b.symbol);
+        const cmp = a.symbol.localeCompare(b.symbol);
+        return sortDirection === "asc" ? cmp : -cmp;
+      }
+      if (sortField === "shares") {
+        return activeTab === "open"
+          ? compareNums(a.sharesHeld, b.sharesHeld, sortDirection)
+          : compareNums(a.closedTradeCount, b.closedTradeCount, sortDirection);
+      }
+      if (sortField === "price") {
+        return compareNums(a.unitPrice, b.unitPrice, sortDirection);
+      }
+      if (sortField === "value") {
+        return activeTab === "open"
+          ? compareNums(
+              a.marketValueInBase ?? a.marketValue,
+              b.marketValueInBase ?? b.marketValue,
+              sortDirection,
+            )
+          : compareNums(
+              a.dividendsReceivedInBase ?? a.dividendsReceived,
+              b.dividendsReceivedInBase ?? b.dividendsReceived,
+              sortDirection,
+            );
       }
       if (sortField === "dayChange") {
-        return (
-          numVal(b.dayChangeInBase ?? b.dayChangeAmount) -
-          numVal(a.dayChangeInBase ?? a.dayChangeAmount)
+        return compareNums(
+          a.dayChangeInBase ?? a.dayChangeAmount,
+          b.dayChangeInBase ?? b.dayChangeAmount,
+          sortDirection,
         );
       }
       if (sortField === "unrealized") {
-        return (
-          numVal(b.unrealizedPnlInBase ?? b.unrealizedPnl) -
-          numVal(a.unrealizedPnlInBase ?? a.unrealizedPnl)
-        );
+        return activeTab === "open"
+          ? compareNums(
+              a.unrealizedPnlInBase ?? a.unrealizedPnl,
+              b.unrealizedPnlInBase ?? b.unrealizedPnl,
+              sortDirection,
+            )
+          : compareNums(
+              a.realizedPnlInBase ?? a.realizedPnl,
+              b.realizedPnlInBase ?? b.realizedPnl,
+              sortDirection,
+            );
       }
       if (sortField === "totalReturn") {
-        return (
-          numVal(b.totalReturnInBase ?? b.totalReturn) -
-          numVal(a.totalReturnInBase ?? a.totalReturn)
+        return compareNums(
+          a.totalReturnInBase ?? a.totalReturn,
+          b.totalReturnInBase ?? b.totalReturn,
+          sortDirection,
         );
       }
-      // Default `"value"`: open positions by SGD market value, closed by realized P&L
+      if (sortField === "weight") {
+        return compareNums(a.weightPercent, b.weightPercent, sortDirection);
+      }
+      // Default (`"default"`): open positions by SGD market value desc, closed by realized P&L desc
       if (activeTab === "closed") {
-        return (
-          numVal(b.realizedPnlInBase ?? b.realizedPnl) -
-          numVal(a.realizedPnlInBase ?? a.realizedPnl)
+        return compareNums(
+          a.realizedPnlInBase ?? a.realizedPnl,
+          b.realizedPnlInBase ?? b.realizedPnl,
+          "desc",
         );
       }
-      return (
-        numVal(b.marketValueInBase ?? b.marketValue) -
-        numVal(a.marketValueInBase ?? a.marketValue)
+      return compareNums(
+        a.marketValueInBase ?? a.marketValue,
+        b.marketValueInBase ?? b.marketValue,
+        "desc",
       );
     });
-  }, [allValuedRows, activeTab, searchQuery, sortField]);
+  }, [allValuedRows, activeTab, searchQuery, sortField, sortDirection]);
+
+  function handleHeaderSort(field: Exclude<SortField, "default">) {
+    const primaryDir: SortDirection = field === "symbol" ? "asc" : "desc";
+    const secondaryDir: SortDirection = field === "symbol" ? "desc" : "asc";
+    if (sortField !== field) {
+      setSortField(field);
+      setSortDirection(primaryDir);
+    } else if (sortDirection === primaryDir) {
+      setSortDirection(secondaryDir);
+    } else {
+      setSortField("default");
+      setSortDirection("desc");
+    }
+  }
+
+  function renderSortIcon(field: Exclude<SortField, "default">) {
+    if (sortField !== field) {
+      return (
+        <ArrowUpDown
+          size={12}
+          strokeWidth={1.9}
+          aria-hidden="true"
+          className="shrink-0 text-ink-3 opacity-55 transition-opacity group-hover:opacity-100"
+        />
+      );
+    }
+    return sortDirection === "asc" ? (
+      <ArrowUp
+        size={12}
+        strokeWidth={2.2}
+        aria-hidden="true"
+        className="shrink-0 text-accent"
+      />
+    ) : (
+      <ArrowDown
+        size={12}
+        strokeWidth={2.2}
+        aria-hidden="true"
+        className="shrink-0 text-accent"
+      />
+    );
+  }
 
   const { pricedVisibleRows, notFoundOpenRows } = useMemo(() => {
     if (activeTab !== "open") {
@@ -273,7 +377,7 @@ export function HoldingsView({
       notFoundOpenRows
         .filter((row) => {
           const bucket = bucketBySymbol.get(row.symbol);
-          return row.assetType !== "crypto" && !bucket?.isDelisted;
+          return !bucket?.isDelisted;
         })
         .map((row) => row.symbol),
     [notFoundOpenRows, bucketBySymbol],
@@ -638,22 +742,40 @@ export function HoldingsView({
         />
 
         <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
-          <div className="relative sm:w-[185px]">
+          <div className="relative sm:w-[195px]">
             <select
               aria-label="Sort holdings"
               value={sortField}
-              onChange={(event) =>
-                setSortField(event.target.value as SortField)
-              }
+              onChange={(event) => {
+                const nextField = event.target.value as SortField;
+                setSortField(nextField);
+                setSortDirection(nextField === "symbol" ? "asc" : "desc");
+              }}
               className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px]"
             >
-              <option value="value">
-                {activeTab === "open" ? "Sort: Market value" : "Sort: Realized P&L"}
+              <option value="default">
+                {activeTab === "open"
+                  ? "Sort: Default (Value)"
+                  : "Sort: Default (Realized)"}
               </option>
-              <option value="unrealized">Sort: Unrealized P&L</option>
+              <option value="value">
+                {activeTab === "open" ? "Sort: Market value" : "Sort: Dividends"}
+              </option>
+              <option value="unrealized">
+                {activeTab === "open"
+                  ? "Sort: Unrealized P&L"
+                  : "Sort: Realized P&L"}
+              </option>
               <option value="totalReturn">Sort: Total return</option>
               <option value="dayChange">Sort: Day change</option>
-              <option value="symbol">Sort: Symbol A–Z</option>
+              <option value="price">Sort: Price</option>
+              <option value="shares">
+                {activeTab === "open" ? "Sort: Shares" : "Sort: Closed trades"}
+              </option>
+              {activeTab === "open" && (
+                <option value="weight">Sort: Weight</option>
+              )}
+              <option value="symbol">Sort: Symbol</option>
             </select>
             <ChevronDown
               size={16}
@@ -797,59 +919,203 @@ export function HoldingsView({
             <table className="w-full border-collapse text-left text-[13px] xl:text-[13.5px]">
               <thead>
                 <tr className="border-b border-line text-[11.5px] font-medium leading-tight text-ink-2">
-                  <th className="py-2.5 pl-4 pr-2">Instrument</th>
+                  <th
+                    className="py-2.5 pl-4 pr-2"
+                    aria-sort={
+                      sortField === "symbol"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("symbol")}
+                      className="group inline-flex cursor-pointer items-center gap-1 text-left transition-colors hover:text-ink"
+                    >
+                      <span>Instrument</span>
+                      {renderSortIcon("symbol")}
+                    </button>
+                  </th>
                   <th className="px-2 py-2.5">Trend</th>
-                  <th className="px-2 py-2.5 text-right">
-                    {activeTab === "open" ? (
-                      <>
-                        <span>Shares</span>
-                        <span className="block font-normal text-ink-3">
-                          Avg Cost
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Closed</span>
-                        <span className="block font-normal text-ink-3">
-                          Trades
-                        </span>
-                      </>
-                    )}
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "shares"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("shares")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>
+                        {activeTab === "open" ? (
+                          <>
+                            <span>Shares</span>
+                            <span className="block font-normal text-ink-3">
+                              Avg Cost
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Closed</span>
+                            <span className="block font-normal text-ink-3">
+                              Trades
+                            </span>
+                          </>
+                        )}
+                      </span>
+                      {renderSortIcon("shares")}
+                    </button>
                   </th>
-                  <th className="px-2 py-2.5 text-right">Price</th>
-                  <th className="px-2 py-2.5 text-right">
-                    {activeTab === "open" ? (
-                      <>
-                        <span>Market</span>
-                        <span className="block">Value</span>
-                      </>
-                    ) : (
-                      "Dividends"
-                    )}
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "price"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("price")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>Price</span>
+                      {renderSortIcon("price")}
+                    </button>
                   </th>
-                  <th className="px-2 py-2.5 text-right">
-                    <span>Day</span>
-                    <span className="block">Change</span>
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "value"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("value")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>
+                        {activeTab === "open" ? (
+                          <>
+                            <span>Market</span>
+                            <span className="block">Value</span>
+                          </>
+                        ) : (
+                          "Dividends"
+                        )}
+                      </span>
+                      {renderSortIcon("value")}
+                    </button>
                   </th>
-                  <th className="px-2 py-2.5 text-right">
-                    {activeTab === "open" ? (
-                      <>
-                        <span>Unrealized</span>
-                        <span className="block">P&amp;L</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Realized</span>
-                        <span className="block">P&amp;L</span>
-                      </>
-                    )}
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "dayChange"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("dayChange")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>
+                        <span>Day</span>
+                        <span className="block">Change</span>
+                      </span>
+                      {renderSortIcon("dayChange")}
+                    </button>
                   </th>
-                  <th className="px-2 py-2.5 text-right">
-                    <span>Total</span>
-                    <span className="block">Return</span>
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "unrealized"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("unrealized")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>
+                        {activeTab === "open" ? (
+                          <>
+                            <span>Unrealized</span>
+                            <span className="block">P&amp;L</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Realized</span>
+                            <span className="block">P&amp;L</span>
+                          </>
+                        )}
+                      </span>
+                      {renderSortIcon("unrealized")}
+                    </button>
+                  </th>
+                  <th
+                    className="px-2 py-2.5 text-right"
+                    aria-sort={
+                      sortField === "totalReturn"
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHeaderSort("totalReturn")}
+                      className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                    >
+                      <span>
+                        <span>Total</span>
+                        <span className="block">Return</span>
+                      </span>
+                      {renderSortIcon("totalReturn")}
+                    </button>
                   </th>
                   {activeTab === "open" && (
-                    <th className="px-2 py-2.5 text-right">Weight</th>
+                    <th
+                      className="px-2 py-2.5 text-right"
+                      aria-sort={
+                        sortField === "weight"
+                          ? sortDirection === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : "none"
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleHeaderSort("weight")}
+                        className="group ml-auto inline-flex cursor-pointer items-center justify-end gap-1 text-right transition-colors hover:text-ink"
+                      >
+                        <span>Weight</span>
+                        {renderSortIcon("weight")}
+                      </button>
+                    </th>
                   )}
                   <th className="w-6 py-2.5 pl-1 pr-3" aria-label="Open detail" />
                 </tr>

@@ -265,10 +265,10 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     );
     expect(totalPct).toBeCloseTo(100, 0);
 
-    // Dead/crypto symbols excluded from external fetches and disclosed in Data Quality
+    // Crypto and stock positions are priced and included in assetClass allocations
     expect(
-      sgdSnapshot.dataQuality.some(
-        (d) => d.kind === "crypto_excluded" || d.kind === "missing_price",
+      sgdSnapshot.allocations.assetClass.some(
+        (slice) => slice.key === "crypto" || slice.key === "stock",
       ),
     ).toBe(true);
 

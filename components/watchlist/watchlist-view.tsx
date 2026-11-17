@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRightLeft,
@@ -10,6 +10,7 @@ import {
   Bell,
   BellRing,
   Calculator,
+  Check,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -37,7 +38,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { GainBadge } from "@/components/ui/gain-badge";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AddSymbolSheet } from "@/components/watchlist/add-symbol-sheet";
 import { SimulateAlertsSheet } from "@/components/watchlist/simulate-alerts-sheet";
 import { WatchlistManageSheet } from "@/components/watchlist/watchlist-manage-sheet";
 import { usePriceFlashRef } from "@/hooks/use-price-flash";
@@ -51,8 +51,13 @@ import {
 import type { ResolvedInstrumentQuote } from "@/lib/market-data/batch-quotes";
 import type { ExchangeRateSnapshot } from "@/lib/market-data/fx";
 import type { CombinedMarketOverview } from "@/lib/market-data/hours";
+import type { SymbolSearchMatch } from "@/lib/market-data/search";
 import { getSgxTickerTransition } from "@/lib/market-data/sgx-transitions";
 import type { LedgerPositionSummary } from "@/lib/services/ledger";
+import {
+  isAbortError,
+  searchStocksClient,
+} from "@/lib/transactions/client-market-api";
 import {
   formatExchangeCodeForDisplay,
   formatSymbolForDisplay,
@@ -306,7 +311,6 @@ export function WatchlistView({
   const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const [isAddSheetOpen, setIsAddSheetOpen] = useState(false);
   const [isManageSheetOpen, setIsManageSheetOpen] = useState(false);
   const [simulatingItem, setSimulatingItem] =
     useState<ValuedWatchlistItem | null>(null);
@@ -318,13 +322,87 @@ export function WatchlistView({
   const [migrationTarget, setMigrationTarget] =
     useState<TickerMigrationTarget | null>(null);
 
+  // Unified Search + Add to Watchlist state
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isSearchingMarket, setIsSearchingMarket] = useState(false);
+  const [marketMatches, setMarketMatches] = useState<SymbolSearchMatch[]>([]);
+  const [addingSymbol, setAddingSymbol] = useState<string | null>(null);
+  const [recentlyAddedSymbol, setRecentlyAddedSymbol] = useState<string | null>(
+    null,
+  );
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
+  const searchSeqRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchCacheRef = useRef(new Map<string, SymbolSearchMatch[]>());
+
+  useEffect(() => {
+    function handleOutsideClick(e: MouseEvent) {
+      if (
+        searchBoxRef.current &&
+        !searchBoxRef.current.contains(e.target as Node)
+      ) {
+        setIsSearchFocused(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 1) {
+      searchAbortRef.current?.abort();
+      queueMicrotask(() => {
+        setIsSearchingMarket(false);
+        setMarketMatches([]);
+      });
+      return;
+    }
+
+    const cacheKey = trimmed.toUpperCase();
+    const cached = searchCacheRef.current.get(cacheKey);
+    if (cached) {
+      queueMicrotask(() => {
+        setIsSearchingMarket(false);
+        setMarketMatches(cached);
+      });
+      return;
+    }
+
+    const seq = ++searchSeqRef.current;
+    const timer = window.setTimeout(async () => {
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      setIsSearchingMarket(true);
+      try {
+        const results = await searchStocksClient(trimmed, {
+          signal: controller.signal,
+        });
+        if (seq !== searchSeqRef.current) return;
+        searchCacheRef.current.set(cacheKey, results);
+        setMarketMatches(results);
+      } catch (err) {
+        if (isAbortError(err) || seq !== searchSeqRef.current) return;
+        setMarketMatches([]);
+      } finally {
+        if (seq === searchSeqRef.current) {
+          setIsSearchingMarket(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
   const trackedSymbols = useMemo(
     () => [
       ...new Set(
         items
           .filter(
             (item) =>
-              item.assetType !== "crypto" &&
               !item.priceNotFound &&
               !initialQuotes[item.symbol]?.priceNotFound,
           )
@@ -457,10 +535,7 @@ export function WatchlistView({
   );
 
   const retryableNotFoundSymbols = useMemo(
-    () =>
-      unpricedDisplayedItems
-        .filter((item) => item.assetType !== "crypto")
-        .map((item) => item.symbol),
+    () => unpricedDisplayedItems.map((item) => item.symbol),
     [unpricedDisplayedItems],
   );
 
@@ -613,11 +688,72 @@ export function WatchlistView({
     });
   }
 
+  const watchedSymbolSet = useMemo(
+    () => new Set(activeItemsOrdered.map((i) => i.symbol.toUpperCase())),
+    [activeItemsOrdered],
+  );
+
+  const addableMarketMatches = useMemo(
+    () =>
+      marketMatches
+        .filter((m) => !watchedSymbolSet.has(m.symbol.toUpperCase()))
+        .slice(0, 6),
+    [marketMatches, watchedSymbolSet],
+  );
+
+  async function handleQuickAddSymbol(match: {
+    symbol: string;
+    name?: string;
+    exchangeCode?: string;
+    currency?: "USD" | "SGD";
+  }): Promise<void> {
+    if (!activeWatchlistId || addingSymbol) {
+      return;
+    }
+    setActionError(null);
+    setAddingSymbol(match.symbol);
+    try {
+      const response = await fetch("/api/watchlists/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          portfolioId: activeWatchlistId,
+          symbol: match.symbol,
+          instrumentName: match.name || undefined,
+          exchangeCode: match.exchangeCode || undefined,
+          currency: match.currency || undefined,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      if (!response.ok) {
+        setActionError(body?.error ?? `Could not add ${match.symbol}.`);
+        return;
+      }
+      setRecentlyAddedSymbol(match.symbol);
+      router.refresh();
+      window.setTimeout(() => {
+        setRecentlyAddedSymbol((prev) =>
+          prev === match.symbol ? null : prev,
+        );
+      }, 1500);
+    } catch {
+      setActionError("Network error while adding symbol to watchlist.");
+    } finally {
+      setAddingSymbol(null);
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Watchlist"
-        subtitle="Stocks you follow, price alerts, and what-if paper simulations."
+        subtitle={
+          fxUsdToSgd
+            ? `Stocks you follow, price alerts, and paper simulations · 1 USD = ${Number(fxUsdToSgd.rate).toFixed(4)} SGD`
+            : "Stocks you follow, price alerts, and what-if paper simulations."
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {trackedSymbols.length > 0 && (
@@ -646,16 +782,6 @@ export function WatchlistView({
               <FolderCog size={16} strokeWidth={1.9} aria-hidden="true" />
               <span>Manage Lists</span>
             </Button>
-            {activeWatchlist && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setIsAddSheetOpen(true)}
-              >
-                <Plus size={16} strokeWidth={2} aria-hidden="true" />
-                <span>Add Symbol</span>
-              </Button>
-            )}
           </div>
         }
       />
@@ -677,9 +803,9 @@ export function WatchlistView({
           }
         />
       ) : (
-        <div className="space-y-6">
-          {/* Watchlist Switcher Tabs + FX Reference */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-5">
+          {/* Unified Apple-Grade Top Control Bar: Watchlist Switcher + Search/Add + Sort */}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               {watchlistPortfolios.map((list) => {
                 const isSelected = list.id === activeWatchlistId;
@@ -689,7 +815,7 @@ export function WatchlistView({
                     key={list.id}
                     type="button"
                     onClick={() => setSelectedWatchlistId(list.id)}
-                    className={`inline-flex cursor-pointer items-center gap-2 rounded-[10px] px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
+                    className={`inline-flex h-9.5 cursor-pointer items-center gap-2 rounded-[10px] px-3.5 text-[13px] font-medium transition-colors ${
                       isSelected
                         ? "bg-accent text-accent-ink"
                         : "border border-line bg-surface text-ink-2 hover:text-ink"
@@ -710,12 +836,174 @@ export function WatchlistView({
               })}
             </div>
 
-            {fxUsdToSgd && (
-              <span className="num text-[12px] text-ink-2">
-                1 USD = {fxUsdToSgd.rate} SGD ·{" "}
-                <span className="font-mono text-ink-3">{fxUsdToSgd.label}</span>
-              </span>
-            )}
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+              {/* Unified Search & Add Ticker Input + Spotlight Dropdown */}
+              <div
+                ref={searchBoxRef}
+                className="relative w-full sm:w-[290px] md:w-[340px]"
+              >
+                <Search
+                  size={16}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-2"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onFocus={() => setIsSearchFocused(true)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setIsSearchFocused(true);
+                  }}
+                  placeholder="Search or add ticker (US, SGX, LSE, Crypto)…"
+                  aria-label="Search or add symbol to watchlist"
+                  className="field-input h-9.5 w-full bg-surface pl-9.5 pr-8 text-[13.5px]"
+                />
+                {isSearchingMarket && (
+                  <Loader2
+                    size={15}
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-ink-3"
+                    aria-hidden="true"
+                  />
+                )}
+
+                {isSearchFocused && searchQuery.trim().length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-[380px] overflow-y-auto rounded-[12px] border border-line-strong bg-surface-2 shadow-raised">
+                    {/* Section 1: Matching stocks already in this watchlist */}
+                    {displayedItems.length > 0 && (
+                      <div className="border-b border-line">
+                        <p className="px-3.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+                          In &ldquo;{activeWatchlist?.name}&rdquo; (
+                          {displayedItems.length})
+                        </p>
+                        <ul className="divide-y divide-line/60">
+                          {displayedItems.slice(0, 4).map((item) => (
+                            <li key={item.instrumentId}>
+                              <Link
+                                href={`/holdings/${encodeURIComponent(item.symbol)}`}
+                                onClick={() => setIsSearchFocused(false)}
+                                className="flex items-center justify-between gap-2 px-3.5 py-2 text-[13px] transition-colors hover:bg-surface"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-semibold text-ink">
+                                      {formatSymbolForDisplay(item.symbol)}
+                                    </span>
+                                    <span className="rounded-[6px] bg-accent/15 px-1.5 py-0.5 text-[10.5px] font-medium text-accent">
+                                      In watchlist
+                                    </span>
+                                  </div>
+                                  <p className="truncate text-[12px] text-ink-2">
+                                    {item.name ?? item.symbol}
+                                  </p>
+                                </div>
+                                <span className="num shrink-0 font-medium text-ink">
+                                  {item.unitPrice
+                                    ? formatMoney(item.unitPrice, item.currency)
+                                    : "—"}
+                                </span>
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Section 2: Potential stocks to add to watchlist */}
+                    <div>
+                      <p className="px-3.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-3">
+                        Add to &ldquo;{activeWatchlist?.name}&rdquo;
+                      </p>
+                      {isSearchingMarket && addableMarketMatches.length === 0 ? (
+                        <div className="space-y-1.5 px-3.5 py-3">
+                          <Skeleton className="h-3.5 w-24" />
+                          <Skeleton className="h-3 w-44" />
+                        </div>
+                      ) : addableMarketMatches.length === 0 ? (
+                        <p className="px-3.5 py-3 text-[12.5px] text-ink-3">
+                          {displayedItems.length > 0
+                            ? "Already in this watchlist."
+                            : `No new tickers found for “${searchQuery.trim()}”.`}
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-line/60">
+                          {addableMarketMatches.map((match) => {
+                            const isAdding = addingSymbol === match.symbol;
+                            const isJustAdded =
+                              recentlyAddedSymbol === match.symbol;
+                            return (
+                              <li key={match.symbol}>
+                                <button
+                                  type="button"
+                                  disabled={isAdding}
+                                  onClick={() => void handleQuickAddSymbol(match)}
+                                  className="flex w-full cursor-pointer items-center justify-between gap-2 px-3.5 py-2.5 text-left text-[13px] transition-colors hover:bg-surface disabled:opacity-60"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-semibold text-ink">
+                                        {formatSymbolForDisplay(match.symbol)}
+                                      </span>
+                                      <span className="rounded-[6px] bg-surface px-1.5 py-0.5 text-[10.5px] font-medium text-ink-3">
+                                        {match.exchangeDisplay || match.currency}
+                                      </span>
+                                    </div>
+                                    <p className="truncate text-[12px] text-ink-2">
+                                      {match.name}
+                                    </p>
+                                  </div>
+                                  <span className="inline-flex shrink-0 items-center gap-1 rounded-[8px] bg-accent/15 px-2.5 py-1 text-[12px] font-semibold text-accent">
+                                    {isAdding ? (
+                                      <>
+                                        <Loader2
+                                          size={13}
+                                          className="animate-spin"
+                                        />
+                                        <span>Adding…</span>
+                                      </>
+                                    ) : isJustAdded ? (
+                                      <>
+                                        <Check size={13} />
+                                        <span>Added</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Plus size={13} strokeWidth={2.2} />
+                                        <span>Add</span>
+                                      </>
+                                    )}
+                                  </span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative sm:w-[205px]">
+                <select
+                  aria-label="Sort watchlist"
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px]"
+                >
+                  <option value="custom">Sort: Custom order</option>
+                  <option value="dayChange">Sort: Day change %</option>
+                  <option value="paperReturn">Sort: Paper return %</option>
+                  <option value="symbol">Sort: Symbol A–Z</option>
+                </select>
+                <ChevronDown
+                  size={16}
+                  strokeWidth={1.9}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-2"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Active Triggered Alerts Banner */}
@@ -776,62 +1064,15 @@ export function WatchlistView({
             <EmptyState
               icon={Eye}
               title={`“${activeWatchlist?.name}” is empty`}
-              description="Search live tickers to track prices, set buy-zone alerts, or test a historical what-if paper entry."
-              actions={
-                <Button
-                  type="button"
-                  onClick={() => setIsAddSheetOpen(true)}
-                  className="h-10 px-4 text-[14px]"
-                >
-                  <Plus size={16} strokeWidth={2} aria-hidden="true" />
-                  Add first symbol
-                </Button>
-              }
+              description="Use the search bar above to find and add live stocks, ETFs, or crypto to this watchlist."
             />
           ) : (
             <>
-              {/* Sort & Search Toolbar */}
-              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="relative sm:w-[235px]">
-                  <select
-                    aria-label="Sort watchlist"
-                    value={sortMode}
-                    onChange={(e) => setSortMode(e.target.value as SortMode)}
-                    className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px]"
-                  >
-                    <option value="custom">Sort: Custom order</option>
-                    <option value="dayChange">Sort: Day change %</option>
-                    <option value="paperReturn">Sort: Paper return %</option>
-                    <option value="symbol">Sort: Symbol A–Z</option>
-                  </select>
-                  <ChevronDown
-                    size={16}
-                    strokeWidth={1.9}
-                    aria-hidden="true"
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-2"
-                  />
-                </div>
-
-                <div className="relative w-full sm:w-[240px]">
-                  <Search
-                    size={16}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-2"
-                    aria-hidden="true"
-                  />
-                  <input
-                    type="search"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search ticker or name…"
-                    aria-label="Search watchlist"
-                    className="field-input h-9.5 bg-surface pl-9.5 pr-3 text-[14px]"
-                  />
-                </div>
-              </div>
-
               {displayedItems.length === 0 ? (
                 <Card className="px-4 py-10 text-center text-[14px] text-ink-2">
-                  No watched symbols match &ldquo;{searchQuery}&rdquo;.
+                  No watched symbols in &ldquo;{activeWatchlist?.name}&rdquo;
+                  match &ldquo;{searchQuery}&rdquo; — select a match in the
+                  search dropdown above to add it.
                 </Card>
               ) : (
                 <>
@@ -1534,17 +1775,6 @@ export function WatchlistView({
       )}
 
       {/* Sheets */}
-      {activeWatchlist && (
-        <AddSymbolSheet
-          isOpen={isAddSheetOpen}
-          onClose={() => setIsAddSheetOpen(false)}
-          portfolioId={activeWatchlist.id}
-          portfolioName={activeWatchlist.name}
-          existingSymbols={activeItemsOrdered.map((i) => i.symbol)}
-          onAdded={() => router.refresh()}
-        />
-      )}
-
       <SimulateAlertsSheet
         item={simulatingItem}
         defaultBenchmark={defaultBenchmark}
