@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { toErrorResponse } from "@/lib/api-error";
 import { requireSession } from "@/lib/auth/guard";
+import { syncPortfolioDividends } from "@/lib/services/dividends";
 import {
   computeLedgerSummaries,
   createTransaction,
@@ -106,6 +107,7 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.json().catch(() => null);
     const parsed = saveTransactionBodySchema.parse(rawBody);
     const created = await createTransaction(parsed);
+    await syncPortfolioDividends({ instrumentId: created.instrumentId });
     const enriched = await getEnrichedTransactionById(created.id);
     return NextResponse.json(
       { transaction: enriched ?? created },

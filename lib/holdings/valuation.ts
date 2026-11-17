@@ -57,6 +57,25 @@ export interface SerializedClosedLotMatch {
   realizedPnlInBase: string | null;
 }
 
+export interface SerializedDividendRecord {
+  transactionId: string;
+  portfolioId: string;
+  portfolioName: string;
+  localDate: string;
+  sharesEligible: string;
+  dividendPerShare: string;
+  grossAmount: string;
+  grossAmountInBase: string | null;
+  withholdingTaxPercent: string;
+  withholdingTaxAmount: string;
+  withholdingTaxInBase: string | null;
+  netAmount: string;
+  netAmountInBase: string | null;
+  fxRateToBase: string | null;
+  notes: string | null;
+  isAutoSynced: boolean;
+}
+
 export interface SerializedFifoBucket {
   portfolioId: string;
   portfolioName: string;
@@ -83,6 +102,7 @@ export interface SerializedFifoBucket {
   zeroCostBuyCount: number;
   openLots: SerializedOpenLot[];
   closedLotMatches: SerializedClosedLotMatch[];
+  dividends?: SerializedDividendRecord[];
 }
 
 export interface ValuedHoldingRow {

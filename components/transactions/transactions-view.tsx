@@ -432,7 +432,17 @@ export function TransactionsView({
                   row.type === "Sell All"
                     ? `All shares @ ${formatMoney(row.price, row.currency)}`
                     : row.type === "Dividend"
-                      ? `Dividend · ${formatMoney(row.quantity, row.currency)}`
+                      ? (() => {
+                          const gross = Number(row.quantity);
+                          const commVal = Number(row.commissionValue ?? 0);
+                          const taxAmt = row.commissionIsPercent
+                            ? (gross * commVal) / 100
+                            : commVal;
+                          const net = Math.max(0, gross - taxAmt);
+                          return taxAmt > 0
+                            ? `Net ${formatMoney(net, row.currency)} (Gross ${formatMoney(gross, row.currency)} · ${row.commissionRaw} tax)`
+                            : `Dividend · ${formatMoney(row.quantity, row.currency)}`;
+                        })()
                       : `${formatQuantity(row.quantity)} sh × ${formatMoney(row.price, row.currency)}`;
 
                 return (
@@ -575,11 +585,32 @@ export function TransactionsView({
                             </span>
                           </td>
                           <td className="num whitespace-nowrap px-4 py-3 text-right">
-                            {row.type === "Sell All"
-                              ? "All shares"
-                              : row.type === "Dividend"
-                                ? formatMoney(row.quantity, row.currency)
-                                : formatQuantity(row.quantity)}
+                            {row.type === "Sell All" ? (
+                              "All shares"
+                            ) : row.type === "Dividend" ? (
+                              (() => {
+                                const gross = Number(row.quantity);
+                                const commVal = Number(row.commissionValue ?? 0);
+                                const taxAmt = row.commissionIsPercent
+                                  ? (gross * commVal) / 100
+                                  : commVal;
+                                const net = Math.max(0, gross - taxAmt);
+                                return (
+                                  <div>
+                                    <div className="font-medium text-gain">
+                                      {formatMoney(net, row.currency)}
+                                    </div>
+                                    {taxAmt > 0 && (
+                                      <div className="text-[11px] text-ink-2">
+                                        Gross {formatMoney(gross, row.currency)}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              formatQuantity(row.quantity)
+                            )}
                           </td>
                           <td className="num whitespace-nowrap px-4 py-3 text-right">
                             <div>

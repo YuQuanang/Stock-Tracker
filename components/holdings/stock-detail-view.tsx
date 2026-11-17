@@ -52,7 +52,7 @@ import {
   formatSymbolForDisplay,
 } from "@/lib/transactions/form-logic";
 
-type DetailLedgerTab = "lots" | "closed" | "transactions";
+type DetailLedgerTab = "lots" | "closed" | "dividends" | "transactions";
 
 interface ComputedOpenLot extends SerializedOpenLot {
   liveValue: string | null;
@@ -293,6 +293,34 @@ export function StockDetailView({
     return matches.sort((a, b) => b.sellDate.localeCompare(a.sellDate));
   }, [filteredBuckets]);
 
+  const filteredDividends = useMemo(() => {
+    const divs = filteredBuckets.flatMap((b) => b.dividends ?? []);
+    return divs.sort((a, b) => b.localDate.localeCompare(a.localDate));
+  }, [filteredBuckets]);
+
+  const dividendTotals = useMemo(() => {
+    let gross = toDecimal(0);
+    let tax = toDecimal(0);
+    let net = toDecimal(0);
+    let netBase = toDecimal(0);
+    let hasBase = false;
+    for (const d of filteredDividends) {
+      gross = gross.plus(toDecimal(d.grossAmount));
+      tax = tax.plus(toDecimal(d.withholdingTaxAmount));
+      net = net.plus(toDecimal(d.netAmount));
+      if (d.netAmountInBase !== null) {
+        netBase = netBase.plus(toDecimal(d.netAmountInBase));
+        hasBase = true;
+      }
+    }
+    return {
+      gross: toDecimalString(gross, 2),
+      tax: toDecimalString(tax, 2),
+      net: toDecimalString(net, 2),
+      netInBase: hasBase ? toDecimalString(netBase, 2) : null,
+    };
+  }, [filteredDividends]);
+
   const filteredTransactions = useMemo(
     () =>
       selectedPortfolioId === "all"
@@ -345,6 +373,10 @@ export function StockDetailView({
         label: `Closed Trades (${filteredClosedMatches.length})`,
       },
       {
+        value: "dividends" as DetailLedgerTab,
+        label: `Dividends Received (${filteredDividends.length})`,
+      },
+      {
         value: "transactions" as DetailLedgerTab,
         label: `Transactions (${filteredTransactions.length})`,
       },
@@ -352,6 +384,7 @@ export function StockDetailView({
     [
       computedOpenLots.length,
       filteredClosedMatches.length,
+      filteredDividends.length,
       filteredTransactions.length,
     ],
   );
@@ -1293,7 +1326,200 @@ export function StockDetailView({
           </Card>
         )}
 
-        {/* TAB 3: TRANSACTIONS HISTORY */}
+        {/* TAB 3: DIVIDENDS RECEIVED */}
+        {ledgerTab === "dividends" && (
+          <Card className="overflow-hidden">
+            {filteredDividends.length === 0 ? (
+              <div className="px-4 py-10 text-center text-[14px] text-ink-2">
+                No dividends received for {instrument.symbol} in this scope.
+              </div>
+            ) : (
+              <>
+                {/* Top Summary Strip */}
+                <div className="grid grid-cols-1 gap-3 border-b border-line bg-surface-2 px-4 py-3.5 sm:grid-cols-3 sm:px-5">
+                  <div>
+                    <p className="text-[11.5px] font-medium text-ink-2">
+                      Gross Dividends
+                    </p>
+                    <p className="num mt-0.5 text-[15px] font-semibold text-ink">
+                      {formatMoney(dividendTotals.gross, instrument.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11.5px] font-medium text-ink-2">
+                      Withholding Tax
+                    </p>
+                    <p className="num mt-0.5 text-[15px] font-semibold text-ink-2">
+                      {Number(dividendTotals.tax) > 0
+                        ? `-${formatMoney(dividendTotals.tax, instrument.currency)}`
+                        : formatMoney("0", instrument.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11.5px] font-medium text-ink-2">
+                      Net Received (After Tax)
+                    </p>
+                    <div className="mt-0.5 flex flex-wrap items-baseline gap-2">
+                      <span className="num text-[15px] font-semibold text-gain">
+                        {formatMoney(dividendTotals.net, instrument.currency)}
+                      </span>
+                      {instrument.currency !== baseCurrency &&
+                        dividendTotals.netInBase && (
+                          <span className="num text-[12px] text-ink-2">
+                            ({formatMoney(dividendTotals.netInBase, baseCurrency)})
+                          </span>
+                        )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mobile Dividends Cards */}
+                <div className="divide-y divide-line md:hidden">
+                  {filteredDividends.map((div) => {
+                    const hasTax = Number(div.withholdingTaxAmount) > 0;
+                    return (
+                      <div
+                        key={div.transactionId}
+                        className="space-y-2 px-4 py-3.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-mono text-[13.5px] font-semibold text-ink">
+                                {div.localDate}
+                              </p>
+                              {div.isAutoSynced && (
+                                <span className="rounded-[6px] bg-accent/12 px-1.5 py-0.5 text-[11px] font-medium text-accent">
+                                  Auto
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[12px] text-ink-2">
+                              {div.portfolioName}
+                              {Number(div.sharesEligible) > 0
+                                ? ` · ${formatQuantity(div.sharesEligible)} sh @ ${formatMoney(div.dividendPerShare, instrument.currency)}/sh`
+                                : ""}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <GainBadge
+                              amount={div.netAmount}
+                              currency={instrument.currency}
+                              size="sm"
+                            />
+                            {instrument.currency !== baseCurrency &&
+                              div.netAmountInBase && (
+                                <p className="num mt-0.5 text-[11.5px] text-ink-2">
+                                  {formatMoney(div.netAmountInBase, baseCurrency)}
+                                </p>
+                              )}
+                          </div>
+                        </div>
+
+                        <div className="num flex items-center justify-between text-[12px] text-ink-2">
+                          <span>
+                            Gross {formatMoney(div.grossAmount, instrument.currency)}
+                          </span>
+                          <span>
+                            {hasTax
+                              ? `Tax -${formatMoney(div.withholdingTaxAmount, instrument.currency)} (${Number(div.withholdingTaxPercent).toFixed(0)}%)`
+                              : "0% tax"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop Dividends Table */}
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full border-collapse text-left text-[14px]">
+                    <thead>
+                      <tr className="border-b border-line text-[12px] font-medium text-ink-2">
+                        <th className="px-4 py-3">Ex-Date</th>
+                        <th className="px-3 py-3">Portfolio</th>
+                        <th className="px-3 py-3 text-right">Shares Held</th>
+                        <th className="px-3 py-3 text-right">Div / Share</th>
+                        <th className="px-3 py-3 text-right">Gross Amount</th>
+                        <th className="px-3 py-3 text-right">Withholding Tax</th>
+                        <th className="px-4 py-3 text-right">
+                          Net Received (After Tax)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {filteredDividends.map((div) => {
+                        const hasTax = Number(div.withholdingTaxAmount) > 0;
+                        return (
+                          <tr
+                            key={div.transactionId}
+                            className="transition-colors hover:bg-surface-2"
+                          >
+                            <td className="font-mono whitespace-nowrap px-4 py-3.5 text-[13px] font-medium text-ink">
+                              {div.localDate}
+                              {div.isAutoSynced && (
+                                <span className="ml-2 rounded-[6px] bg-accent/12 px-1.5 py-0.5 font-sans text-[11px] font-medium text-accent">
+                                  Auto
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-3.5 text-ink-2">
+                              {div.portfolioName}
+                            </td>
+                            <td className="num whitespace-nowrap px-3 py-3.5 text-right text-ink">
+                              {Number(div.sharesEligible) > 0
+                                ? formatQuantity(div.sharesEligible)
+                                : "—"}
+                            </td>
+                            <td className="num whitespace-nowrap px-3 py-3.5 text-right text-ink">
+                              {Number(div.dividendPerShare) > 0
+                                ? formatMoney(
+                                    div.dividendPerShare,
+                                    instrument.currency,
+                                  )
+                                : "—"}
+                            </td>
+                            <td className="num whitespace-nowrap px-3 py-3.5 text-right font-medium text-ink">
+                              {formatMoney(div.grossAmount, instrument.currency)}
+                            </td>
+                            <td className="num whitespace-nowrap px-3 py-3.5 text-right text-ink-2">
+                              {hasTax
+                                ? `-${formatMoney(div.withholdingTaxAmount, instrument.currency)} (${Number(div.withholdingTaxPercent).toFixed(0)}%)`
+                                : `0% (${formatMoney("0", instrument.currency)})`}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right">
+                              <div>
+                                <GainBadge
+                                  amount={div.netAmount}
+                                  currency={instrument.currency}
+                                  size="sm"
+                                />
+                                {instrument.currency !== baseCurrency &&
+                                  div.netAmountInBase && (
+                                    <div className="num mt-0.5 text-[12px] text-ink-2">
+                                      {formatMoney(
+                                        div.netAmountInBase,
+                                        baseCurrency,
+                                      )}
+                                      {div.fxRateToBase
+                                        ? ` @ ${Number(div.fxRateToBase).toFixed(4)}`
+                                        : ""}
+                                    </div>
+                                  )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </Card>
+        )}
+
+        {/* TAB 4: TRANSACTIONS HISTORY */}
         {ledgerTab === "transactions" && (
           <Card className="overflow-hidden">
             {filteredTransactions.length === 0 ? (

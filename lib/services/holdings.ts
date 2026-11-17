@@ -34,6 +34,7 @@ import {
 } from "@/lib/finance";
 import type {
   SerializedClosedLotMatch,
+  SerializedDividendRecord,
   SerializedFifoBucket,
   SerializedOpenLot,
 } from "@/lib/holdings/valuation";
@@ -51,6 +52,10 @@ import {
   resolveQuotesForSymbols,
   resolveStartDateForRange,
 } from "@/lib/market-data";
+import {
+  AUTO_DIVIDEND_METHOD,
+  syncPortfolioDividends,
+} from "@/lib/services/dividends";
 import { backfillMissingTransactionSgdTotals } from "@/lib/services/fx-sgd";
 import {
   type EnrichedCorporateAction,
@@ -351,6 +356,28 @@ export async function loadPortfolioFifoSnapshot(options: {
         };
       });
 
+    const dividends: SerializedDividendRecord[] = fifo.dividends.map((div) => {
+      const txEntry = allTxById.get(div.transactionId);
+      return {
+        transactionId: div.transactionId,
+        portfolioId: group.portfolioId,
+        portfolioName: group.portfolioName,
+        localDate: div.localDate,
+        sharesEligible: toDecimalString(div.sharesEligible, 8),
+        dividendPerShare: toDecimalString(div.dividendPerShare, 6),
+        grossAmount: toDecimalString(div.grossAmount, 6),
+        grossAmountInBase: toNullableDecimalString(div.grossAmountInBase, 6),
+        withholdingTaxPercent: toDecimalString(div.taxPercent, 2),
+        withholdingTaxAmount: toDecimalString(div.commission, 6),
+        withholdingTaxInBase: toNullableDecimalString(div.commissionInBase, 6),
+        netAmount: toDecimalString(div.netAmount, 6),
+        netAmountInBase: toNullableDecimalString(div.netAmountInBase, 6),
+        fxRateToBase: toNullableDecimalString(div.fxRateToBase, 6),
+        notes: txEntry?.tx.notes ?? null,
+        isAutoSynced: txEntry?.tx.accountingMethod === AUTO_DIVIDEND_METHOD,
+      };
+    });
+
     buckets.push({
       portfolioId: group.portfolioId,
       portfolioName: group.portfolioName,
@@ -385,6 +412,7 @@ export async function loadPortfolioFifoSnapshot(options: {
       zeroCostBuyCount: fifo.zeroCostBuys.length,
       openLots,
       closedLotMatches,
+      dividends,
     });
   }
 
@@ -433,8 +461,9 @@ export async function getHoldingsPageSnapshot(
   const database = resolvedOpts.db ?? (await getDb());
   const cacheOnly = resolvedOpts.cacheOnly ?? false;
 
+  // Sync historical & newly ex-dividend payouts (cached by daily ledger signature)
+  await syncPortfolioDividends({ db: database });
   if (!cacheOnly) {
-    // Ensure all historical purchase FX snapshots are populated
     await backfillMissingTransactionSgdTotals({ db: database });
   }
 
@@ -509,6 +538,10 @@ export async function getStockDetailSnapshot(
     return null;
   }
 
+  await syncPortfolioDividends({
+    db: database,
+    instrumentId: targetInstr.id,
+  });
   await backfillMissingTransactionSgdTotals({ db: database });
   const now = new Date();
   const initialMarket = getCombinedMarketOverview(now);

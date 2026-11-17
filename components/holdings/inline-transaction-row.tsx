@@ -117,15 +117,27 @@ export function InlineTransactionRow({
 
         <p className="num mt-1 text-[13.5px] text-ink-2">
           {tx.type === "Dividend"
-            ? `Cash dividend ${formatMoney(tx.quantity, tx.currency)}`
+            ? (() => {
+                const gross = Number(tx.quantity);
+                const commVal = Number(tx.commissionValue ?? 0);
+                const taxAmt = tx.commissionIsPercent
+                  ? (gross * commVal) / 100
+                  : commVal;
+                const net = Math.max(0, gross - taxAmt);
+                return taxAmt > 0
+                  ? `Net dividend ${formatMoney(net, tx.currency)} (Gross ${formatMoney(gross, tx.currency)} · ${tx.commissionRaw} tax)`
+                  : `Cash dividend ${formatMoney(tx.quantity, tx.currency)}`;
+              })()
             : tx.type === "Sell All"
               ? `All open shares @ ${formatMoney(tx.price, tx.currency)}`
               : `${formatQuantity(tx.quantity)} sh @ ${formatMoney(tx.price, tx.currency)}`}
-          {tx.commissionRaw && tx.commissionRaw !== "0"
+          {tx.type !== "Dividend" &&
+          tx.commissionRaw &&
+          tx.commissionRaw !== "0"
             ? ` · Fee ${tx.commissionRaw}`
             : ""}
           {tx.totalCostSgd
-            ? ` · ${formatMoney(tx.totalCostSgd, "SGD")} total`
+            ? ` · ${formatMoney(tx.totalCostSgd, "SGD")} ${tx.type === "Dividend" ? "net SGD" : "total"}`
             : ""}
         </p>
 

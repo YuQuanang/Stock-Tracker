@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { TransactionsView } from "@/components/transactions/transactions-view";
 import { PageHeader } from "@/components/ui/page-header";
+import { syncPortfolioDividends } from "@/lib/services/dividends";
 import { backfillMissingTransactionSgdTotals } from "@/lib/services/fx-sgd";
 import {
   computeLedgerSummaries,
@@ -16,8 +17,8 @@ export default async function TransactionsPage() {
   // Always render at request time against the live ledger database.
   await connection();
 
-  // Auto-populate historical USD -> SGD rates and SGD totals on any previously
-  // imported or Sell All rows that have not been backfilled yet.
+  // Auto-sync historical cash dividends and populate historical USD -> SGD rates.
+  await syncPortfolioDividends();
   await backfillMissingTransactionSgdTotals();
 
   const [portfolios, transactions, summary, corporateActions] =

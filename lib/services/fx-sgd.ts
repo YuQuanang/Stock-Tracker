@@ -356,8 +356,19 @@ export async function reconcileLedgerPairsSgdTotals(params: {
         const disposedShares = soldSharesByTxId.get(tx.id) ?? ZERO;
         nativeGross = disposedShares.mul(priceDec);
       } else if (tx.type === "Dividend") {
-        nativeGross =
+        const grossDiv =
           params.dividendMode === "shares" ? qtyDec.mul(priceDec) : qtyDec;
+        const commVal =
+          tx.commissionValue !== null && tx.commissionValue !== undefined
+            ? toDecimal(tx.commissionValue)
+            : ZERO;
+        const commAmt = tx.commissionIsPercent
+          ? grossDiv.mul(commVal).div(toDecimal(100))
+          : commVal;
+        nativeGross =
+          params.dividendMode === "shares"
+            ? grossDiv.plus(commAmt)
+            : grossDiv.minus(commAmt);
       } else {
         nativeGross = qtyDec.mul(priceDec);
       }

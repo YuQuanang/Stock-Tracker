@@ -20,6 +20,7 @@ import {
   type DecimalInput,
   type DecimalValue,
   FinanceDecimal,
+  HUNDRED,
   QUANTITY_EPSILON,
   safeDivide,
   toDecimal,
@@ -101,10 +102,16 @@ export interface DividendRecord {
   transactionId: string;
   executedAt: Date;
   localDate: string;
+  sharesEligible: DecimalValue;
+  dividendPerShare: DecimalValue;
   grossAmount: DecimalValue;
+  grossAmountInBase: DecimalValue | null;
   commission: DecimalValue;
+  commissionInBase: DecimalValue | null;
+  taxPercent: DecimalValue;
   netAmount: DecimalValue;
   netAmountInBase: DecimalValue | null;
+  fxRateToBase: DecimalValue | null;
   reinvestedShares: DecimalValue;
 }
 
@@ -483,15 +490,30 @@ export function evaluateFifoLedger(
       }
 
       const dividendFxRate = resolveHistoricalFx(tx, localDate);
+      const sharesEligible = sumOpenShares(openLots);
 
       if (dividendMode === "cash") {
-        // Default (section 7.4): `quantity` is the cash dividend in native currency.
+        // Default (section 7.4): `quantity` is the gross cash dividend in native currency.
         const grossDividend = quantity;
+        const dividendPerShare = price.gt(ZERO)
+          ? price
+          : sharesEligible.gt(ZERO)
+            ? (safeDivide(grossDividend, sharesEligible) ?? ZERO)
+            : ZERO;
         const divCommission = computeCommissionAmount(
           grossDividend,
           commissionSpec,
         );
+        const taxPercent = commissionSpec.isPercent
+          ? commissionSpec.value
+          : grossDividend.gt(ZERO)
+            ? (safeDivide(divCommission.mul(HUNDRED), grossDividend) ?? ZERO)
+            : ZERO;
         const netDividend = grossDividend.minus(divCommission);
+        const grossDividendInBase =
+          dividendFxRate !== null ? grossDividend.mul(dividendFxRate) : null;
+        const commissionInBase =
+          dividendFxRate !== null ? divCommission.mul(dividendFxRate) : null;
         const netDividendInBase =
           dividendFxRate !== null ? netDividend.mul(dividendFxRate) : null;
 
@@ -499,20 +521,38 @@ export function evaluateFifoLedger(
           transactionId: tx.id,
           executedAt: tx.executedAt,
           localDate,
+          sharesEligible,
+          dividendPerShare,
           grossAmount: grossDividend,
+          grossAmountInBase: grossDividendInBase,
           commission: divCommission,
+          commissionInBase,
+          taxPercent,
           netAmount: netDividend,
           netAmountInBase: netDividendInBase,
+          fxRateToBase: dividendFxRate,
           reinvestedShares: ZERO,
         });
       } else {
         // Reinvested shares mode: `quantity` new shares bought at `price`.
         const grossDividend = quantity.mul(price);
+        const dividendPerShare = sharesEligible.gt(ZERO)
+          ? (safeDivide(grossDividend, sharesEligible) ?? ZERO)
+          : price;
         const divCommission = computeCommissionAmount(
           grossDividend,
           commissionSpec,
         );
+        const taxPercent = commissionSpec.isPercent
+          ? commissionSpec.value
+          : grossDividend.gt(ZERO)
+            ? (safeDivide(divCommission.mul(HUNDRED), grossDividend) ?? ZERO)
+            : ZERO;
         const netDividend = grossDividend.minus(divCommission);
+        const grossDividendInBase =
+          dividendFxRate !== null ? grossDividend.mul(dividendFxRate) : null;
+        const commissionInBase =
+          dividendFxRate !== null ? divCommission.mul(dividendFxRate) : null;
         const netDividendInBase =
           dividendFxRate !== null ? netDividend.mul(dividendFxRate) : null;
         const reinvestedLotCost = grossDividend.plus(divCommission);
@@ -521,10 +561,16 @@ export function evaluateFifoLedger(
           transactionId: tx.id,
           executedAt: tx.executedAt,
           localDate,
+          sharesEligible,
+          dividendPerShare,
           grossAmount: grossDividend,
+          grossAmountInBase: grossDividendInBase,
           commission: divCommission,
+          commissionInBase,
+          taxPercent,
           netAmount: netDividend,
           netAmountInBase: netDividendInBase,
+          fxRateToBase: dividendFxRate,
           reinvestedShares: quantity,
         });
 

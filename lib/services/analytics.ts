@@ -75,6 +75,7 @@ import {
   normalizeBenchmarkSymbol,
   resolveBenchmarkLabel,
 } from "@/lib/benchmarks/summary";
+import { syncPortfolioDividends } from "@/lib/services/dividends";
 import {
   backfillMissingTransactionSgdTotals,
   ensureHistoricalUsdSgdRates,
@@ -495,6 +496,12 @@ export async function computePortfolioAnalytics(
   const market = getCombinedMarketOverview(now);
 
   if (!options.cacheOnly) {
+    await syncPortfolioDividends({
+      db: database,
+      fetchImpl: options.fetchImpl,
+      now,
+      forceRefresh: options.forceRefresh,
+    });
     await backfillMissingTransactionSgdTotals({
       db: database,
       fetchImpl: options.fetchImpl,

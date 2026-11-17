@@ -566,7 +566,6 @@ export function reconstructPortfolioTimeline(params: {
             });
             const netDiv = grossDiv.minus(comm);
             const divBase = netDiv.mul(fx);
-            totalFeesInBase = totalFeesInBase.plus(comm.mul(fx));
             if (divBase.gt(ZERO)) {
               dayDividendFlow = dayDividendFlow.plus(divBase);
               totalCashDividendsInBase = totalCashDividendsInBase.plus(divBase);

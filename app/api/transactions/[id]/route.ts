@@ -3,6 +3,7 @@ import { z } from "zod";
 import { saveTransactionBodySchema } from "@/app/api/transactions/route";
 import { toErrorResponse } from "@/lib/api-error";
 import { requireSession } from "@/lib/auth/guard";
+import { syncPortfolioDividends } from "@/lib/services/dividends";
 import {
   deleteTransaction,
   getEnrichedTransactionById,
@@ -26,6 +27,7 @@ export async function PUT(
     const rawBody = await request.json().catch(() => null);
     const parsed = saveTransactionBodySchema.parse(rawBody);
     const updated = await updateTransaction(validId, parsed);
+    await syncPortfolioDividends({ instrumentId: updated.instrumentId });
     const enriched = await getEnrichedTransactionById(updated.id);
     return NextResponse.json({ transaction: enriched ?? updated });
   } catch (error) {
@@ -46,6 +48,7 @@ export async function DELETE(
     const { id } = await context.params;
     const validId = idSchema.parse(id);
     await deleteTransaction(validId);
+    await syncPortfolioDividends();
     return NextResponse.json({ ok: true });
   } catch (error) {
     return toErrorResponse(error);
