@@ -719,7 +719,7 @@ export function WatchlistView({
         body: JSON.stringify({
           portfolioId: activeWatchlistId,
           symbol: match.symbol,
-          instrumentName: match.name || undefined,
+          name: match.name || undefined,
           exchangeCode: match.exchangeCode || undefined,
           currency: match.currency || undefined,
         }),
@@ -1413,7 +1413,9 @@ export function WatchlistView({
                                     )}
                                   </div>
                                   <p className="mt-0.5 max-w-[205px] truncate text-[12px] text-ink-2">
-                                    {item.name ?? "—"}
+                                    {item.name ??
+                                      quotes[item.symbol]?.name ??
+                                      "—"}
                                   </p>
                                 </td>
 

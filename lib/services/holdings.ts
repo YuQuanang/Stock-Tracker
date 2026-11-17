@@ -505,6 +505,49 @@ export async function getHoldingsPageSnapshot(
         ),
   ]);
 
+  // Resolve missing display names on instruments from cached/live fundamentals
+  const unnamedTargets = new Map<string, string>();
+  for (const b of buckets) {
+    if (!b.name && !b.isDelisted && !b.priceNotFound) {
+      unnamedTargets.set(b.instrumentId, b.symbol);
+    }
+  }
+  if (unnamedTargets.size > 0 && !cacheOnly) {
+    const resolvedNameEntries = await Promise.all(
+      [...unnamedTargets.entries()].map(async ([instrId, sym]) => {
+        const meta = await fetchInstrumentFundamentals(sym, { now }).catch(
+          () => null,
+        );
+        return [instrId, meta?.name?.trim() || null] as const;
+      }),
+    );
+    const nameByInstrumentId = new Map<string, string>();
+    for (const [instrId, resolvedName] of resolvedNameEntries) {
+      if (resolvedName) {
+        nameByInstrumentId.set(instrId, resolvedName);
+      }
+    }
+    if (nameByInstrumentId.size > 0) {
+      await Promise.all(
+        [...nameByInstrumentId.entries()].map(([instrId, resolvedName]) =>
+          database
+            .update(instrument)
+            .set({ name: resolvedName })
+            .where(eq(instrument.id, instrId))
+            .catch(() => undefined),
+        ),
+      );
+      for (const b of buckets) {
+        if (!b.name) {
+          const foundName = nameByInstrumentId.get(b.instrumentId);
+          if (foundName) {
+            b.name = foundName;
+          }
+        }
+      }
+    }
+  }
+
   return {
     portfolios,
     buckets,
@@ -627,6 +670,14 @@ export async function getStockDetailSnapshot(
     bars:
       slicedOneYearBars.length > 0 ? slicedOneYearBars : historyFiveYear.bars,
   };
+
+  if (!targetInstr.name && fundamentals.name?.trim()) {
+    await database
+      .update(instrument)
+      .set({ name: fundamentals.name.trim() })
+      .where(eq(instrument.id, targetInstr.id))
+      .catch(() => undefined);
+  }
 
   return {
     instrument: {

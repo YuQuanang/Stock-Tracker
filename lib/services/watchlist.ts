@@ -296,6 +296,7 @@ async function computeBenchmarkComparisonCached(input: {
 function serializeWatchlistRow(input: {
   pi: typeof portfolioInstrument.$inferSelect;
   instr: Instrument;
+  resolvedName?: string | null;
   portfolioName: string;
   fiftyTwoWeekLow: string | null;
   fiftyTwoWeekHigh: string | null;
@@ -306,7 +307,7 @@ function serializeWatchlistRow(input: {
     portfolioName: input.portfolioName,
     instrumentId: input.instr.id,
     symbol: input.instr.symbol,
-    name: input.instr.name,
+    name: input.instr.name ?? input.resolvedName ?? null,
     exchangeCode: input.instr.exchangeCode,
     currency: input.instr.currency === "SGD" ? "SGD" : "USD",
     assetType: input.instr.assetType,
@@ -387,9 +388,18 @@ async function hydrateSerializedWatchlistItem(
       : Promise.resolve(null),
   ]);
 
+  if (!row.instr.name && fundamentals?.name) {
+    await database
+      .update(instrument)
+      .set({ name: fundamentals.name })
+      .where(eq(instrument.id, row.instr.id))
+      .catch(() => undefined);
+  }
+
   return serializeWatchlistRow({
     pi: row.pi,
     instr: row.instr,
+    resolvedName: fundamentals?.name ?? null,
     portfolioName: row.portfolioName,
     fiftyTwoWeekLow: fundamentals?.fiftyTwoWeekLow ?? null,
     fiftyTwoWeekHigh: fundamentals?.fiftyTwoWeekHigh ?? null,
@@ -515,11 +525,32 @@ export async function getWatchlistPageSnapshot(options?: {
 
   const fundamentalsBySymbol = new Map(fundamentalsEntries);
 
+  // Heal any instruments missing a display name (e.g. newly added without name)
+  const missingNameUpdates = new Map<string, string>();
+  for (const row of joinedRows) {
+    const resolved = fundamentalsBySymbol.get(row.instr.symbol)?.name?.trim();
+    if (!row.instr.name && resolved) {
+      missingNameUpdates.set(row.instr.id, resolved);
+    }
+  }
+  if (missingNameUpdates.size > 0) {
+    await Promise.all(
+      [...missingNameUpdates.entries()].map(([instrId, resolvedName]) =>
+        database
+          .update(instrument)
+          .set({ name: resolvedName })
+          .where(eq(instrument.id, instrId))
+          .catch(() => undefined),
+      ),
+    );
+  }
+
   const items: SerializedWatchlistItem[] = joinedRows.map((row, index) => {
     const fundamentals = fundamentalsBySymbol.get(row.instr.symbol) ?? null;
     return serializeWatchlistRow({
       pi: row.pi,
       instr: row.instr,
+      resolvedName: fundamentals?.name ?? null,
       portfolioName: row.portfolioName,
       fiftyTwoWeekLow: fundamentals?.fiftyTwoWeekLow ?? null,
       fiftyTwoWeekHigh: fundamentals?.fiftyTwoWeekHigh ?? null,
@@ -567,6 +598,25 @@ export async function addWatchlistItem(
     exchangeCode: input.exchangeCode,
     currency: input.currency,
   });
+
+  if (!targetInstrument.name) {
+    const resolvedMeta = await fetchInstrumentFundamentals(
+      targetInstrument.symbol,
+      {
+        now,
+        fetchImpl: options?.fetchImpl,
+      },
+    ).catch(() => null);
+    const resolvedName = resolvedMeta?.name?.trim() || null;
+    if (resolvedName) {
+      await database
+        .update(instrument)
+        .set({ name: resolvedName })
+        .where(eq(instrument.id, targetInstrument.id))
+        .catch(() => undefined);
+      targetInstrument.name = resolvedName;
+    }
+  }
 
   const existing = await database
     .select()

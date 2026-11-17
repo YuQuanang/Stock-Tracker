@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ArrowDown,
   ArrowRightLeft,
@@ -65,6 +65,32 @@ type SortField =
   | "weight";
 type SortDirection = "asc" | "desc";
 
+const HOLDINGS_SORT_STORAGE_KEY = "kestrel:holdings-sort";
+const VALID_HOLDINGS_SORT_FIELDS = new Set<SortField>([
+  "default",
+  "symbol",
+  "shares",
+  "price",
+  "value",
+  "dayChange",
+  "unrealized",
+  "totalReturn",
+  "weight",
+]);
+
+function persistHoldingsSort(field: SortField, direction: SortDirection): void {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(
+        HOLDINGS_SORT_STORAGE_KEY,
+        JSON.stringify({ field, direction }),
+      );
+    }
+  } catch {
+    // Ignore storage quota or private-mode localStorage errors
+  }
+}
+
 interface HoldingsViewProps {
   portfolios: Portfolio[];
   buckets: SerializedFifoBucket[];
@@ -118,6 +144,32 @@ export function HoldingsView({
   const [sortField, setSortField] = useState<SortField>("default");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage?.getItem(HOLDINGS_SORT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        field?: unknown;
+        direction?: unknown;
+      } | null;
+      if (
+        parsed &&
+        typeof parsed.field === "string" &&
+        VALID_HOLDINGS_SORT_FIELDS.has(parsed.field as SortField) &&
+        (parsed.direction === "asc" || parsed.direction === "desc")
+      ) {
+        const nextField = parsed.field as SortField;
+        const nextDirection = parsed.direction as SortDirection;
+        queueMicrotask(() => {
+          setSortField(nextField);
+          setSortDirection(nextDirection);
+        });
+      }
+    } catch {
+      // Ignore malformed or blocked localStorage entries
+    }
+  }, []);
   const [isTxSheetOpen, setIsTxSheetOpen] = useState(false);
   const [isPortfolioSheetOpen, setIsPortfolioSheetOpen] = useState(false);
 
@@ -317,17 +369,21 @@ export function HoldingsView({
     });
   }, [allValuedRows, activeTab, searchQuery, sortField, sortDirection]);
 
+  function applySortPreference(field: SortField, direction: SortDirection) {
+    setSortField(field);
+    setSortDirection(direction);
+    persistHoldingsSort(field, direction);
+  }
+
   function handleHeaderSort(field: Exclude<SortField, "default">) {
     const primaryDir: SortDirection = field === "symbol" ? "asc" : "desc";
     const secondaryDir: SortDirection = field === "symbol" ? "desc" : "asc";
     if (sortField !== field) {
-      setSortField(field);
-      setSortDirection(primaryDir);
+      applySortPreference(field, primaryDir);
     } else if (sortDirection === primaryDir) {
-      setSortDirection(secondaryDir);
+      applySortPreference(field, secondaryDir);
     } else {
-      setSortField("default");
-      setSortDirection("desc");
+      applySortPreference("default", "desc");
     }
   }
 
@@ -748,8 +804,10 @@ export function HoldingsView({
               value={sortField}
               onChange={(event) => {
                 const nextField = event.target.value as SortField;
-                setSortField(nextField);
-                setSortDirection(nextField === "symbol" ? "asc" : "desc");
+                applySortPreference(
+                  nextField,
+                  nextField === "symbol" ? "asc" : "desc",
+                );
               }}
               className="field-input h-9.5 appearance-none bg-surface pr-8 text-[13.5px]"
             >

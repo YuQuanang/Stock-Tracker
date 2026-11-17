@@ -26,6 +26,7 @@ const addWatchlistItemSchema = z.object({
     .min(1, "Ticker symbol is required.")
     .max(24, "Ticker symbol is too long."),
   name: z.string().trim().max(120).nullish(),
+  instrumentName: z.string().trim().max(120).nullish(),
   exchangeCode: z.string().trim().max(24).nullish(),
   currency: z.enum(["USD", "SGD"]).nullish(),
   priceWhenAdded: nullablePositiveDecimalSchema,
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
     const item = await addWatchlistItem({
       portfolioId: parsed.portfolioId,
       symbol: parsed.symbol,
-      name: parsed.name ?? null,
+      name: parsed.name ?? parsed.instrumentName ?? null,
       exchangeCode: parsed.exchangeCode ?? null,
       currency: parsed.currency ?? null,
       priceWhenAdded: parsed.priceWhenAdded,

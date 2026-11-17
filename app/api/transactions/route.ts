@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { toErrorResponse } from "@/lib/api-error";
 import { requireSession } from "@/lib/auth/guard";
+import { lookupExactSymbol } from "@/lib/market-data";
 import { syncPortfolioDividends } from "@/lib/services/dividends";
 import {
   computeLedgerSummaries,
@@ -106,7 +107,20 @@ export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.json().catch(() => null);
     const parsed = saveTransactionBodySchema.parse(rawBody);
-    const created = await createTransaction(parsed);
+    let resolvedName = parsed.instrumentName ?? undefined;
+    let resolvedExchange = parsed.exchangeCode ?? undefined;
+    if (!resolvedName || !resolvedExchange) {
+      const exactMatch = await lookupExactSymbol(parsed.symbol).catch(() => null);
+      if (exactMatch) {
+        resolvedName = resolvedName || exactMatch.name;
+        resolvedExchange = resolvedExchange || exactMatch.exchangeCode;
+      }
+    }
+    const created = await createTransaction({
+      ...parsed,
+      instrumentName: resolvedName ?? null,
+      exchangeCode: resolvedExchange ?? null,
+    });
     await syncPortfolioDividends({ instrumentId: created.instrumentId });
     const enriched = await getEnrichedTransactionById(created.id);
     return NextResponse.json(
