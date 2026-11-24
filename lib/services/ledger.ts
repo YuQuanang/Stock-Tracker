@@ -6,10 +6,10 @@
  * transactions so no create, edit, or delete can leave an oversold ledger.
  *
  * Every function accepts an optional `Database` handle (defaulting to `getDb()`)
- * so unit and integration tests can run against an isolated in-memory PGlite
- * instance.
+ * so unit and integration tests can run against an isolated in-memory libSQL
+ * SQLite instance.
  */
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { type Database, getDb } from "@/db/client";
 import {
   corporateAction,
@@ -872,7 +872,10 @@ export async function listEnrichedTransactions(
     .innerJoin(portfolio, eq(transaction.portfolioId, portfolio.id))
     .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(transaction.executedAt), desc(transaction.sourceRowId));
+    .orderBy(
+      desc(transaction.executedAt),
+      sql`${transaction.sourceRowId} DESC NULLS FIRST`,
+    );
 
   return rows.map(mapJoinedTransactionRow);
 }
@@ -1900,20 +1903,18 @@ export async function adjustPortfolioHolding(
       txDatabase,
     );
 
-    const [evaluations, splitRows] = await Promise.all([
-      evaluateInstrumentAcrossPortfolios({
-        database: txDatabase,
-        instrumentId: targetInstrument.id,
-        symbol: targetInstrument.symbol,
-        dividendMode: appSettings.dividendMode,
-        onValidationError: "clamp-and-flag",
-      }),
-      txDatabase
-        .select()
-        .from(corporateAction)
-        .where(eq(corporateAction.instrumentId, targetInstrument.id))
-        .orderBy(asc(corporateAction.exDate)),
-    ]);
+    const evaluations = await evaluateInstrumentAcrossPortfolios({
+      database: txDatabase,
+      instrumentId: targetInstrument.id,
+      symbol: targetInstrument.symbol,
+      dividendMode: appSettings.dividendMode,
+      onValidationError: "clamp-and-flag",
+    });
+    const splitRows = await txDatabase
+      .select()
+      .from(corporateAction)
+      .where(eq(corporateAction.instrumentId, targetInstrument.id))
+      .orderBy(asc(corporateAction.exDate));
 
     const portfolioEval = evaluations.find(
       (entry) => entry.portfolioId === targetPortfolio.id,

@@ -1,69 +1,60 @@
 /**
- * Applies SQL migrations from db/migrations.
+ * Applies SQLite / libSQL migrations from `db/migrations-sqlite`.
  *
  * Usage:
  *   npm run db:migrate
  *
- * With DATABASE_URL set (production) this migrates your hosted Postgres.
- * Without it, this migrates the local PGlite database in .data/pglite.
+ * With `TURSO_DATABASE_URL` set (production / staging) this migrates your
+ * hosted Turso database. Without it, this migrates the local SQLite database
+ * in `.data/kestrel.db`.
  *
- * It reads DATABASE_URL straight from the process environment (loaded from
- * .env.local by the npm script) so it does not require the password gate
- * variables to be present.
+ * It reads Turso variables straight from the process environment (loaded from
+ * `.env.local` by the npm script) so it does not require password-gate vars.
  */
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
 
-const migrationsFolder = path.join(process.cwd(), "db", "migrations");
-
-async function migratePostgres(connectionString: string): Promise<void> {
-  const { Pool } = await import("pg");
-  const { drizzle } = await import("drizzle-orm/node-postgres");
-  const { migrate } = await import("drizzle-orm/node-postgres/migrator");
-  const normalizedUrl = connectionString.replace(
-    /([?&]sslmode=)(?:require|prefer|verify-ca)(?=&|$)/gi,
-    "$1verify-full",
-  );
-
-  const pool = new Pool({ connectionString: normalizedUrl, max: 1 });
-  try {
-    await migrate(drizzle(pool), { migrationsFolder });
-  } finally {
-    await pool.end();
-  }
-}
-
-async function migratePglite(): Promise<void> {
-  const { PGlite } = await import("@electric-sql/pglite");
-  const { drizzle } = await import("drizzle-orm/pglite");
-  const { migrate } = await import("drizzle-orm/pglite/migrator");
-
-  const dataDirectory = path.join(process.cwd(), ".data", "pglite");
-  await mkdir(path.dirname(dataDirectory), { recursive: true });
-
-  const client = new PGlite(dataDirectory);
-  try {
-    await migrate(drizzle(client), { migrationsFolder });
-  } finally {
-    await client.close();
-  }
-}
+const migrationsFolder = path.join(process.cwd(), "db", "migrations-sqlite");
 
 async function main(): Promise<void> {
-  const connectionString = process.env.DATABASE_URL?.trim();
+  const tursoUrl = process.env.TURSO_DATABASE_URL?.trim();
+  const tursoAuthToken = process.env.TURSO_AUTH_TOKEN?.trim() || undefined;
 
-  if (connectionString) {
-    console.log("Migrating hosted Postgres (DATABASE_URL)...");
-    await migratePostgres(connectionString);
+  let url: string;
+  if (tursoUrl) {
+    console.log("Migrating hosted Turso database (TURSO_DATABASE_URL)...");
+    url = tursoUrl;
   } else {
-    console.log("DATABASE_URL not set: migrating local PGlite (.data/pglite)...");
-    await migratePglite();
+    const dataFile = path.join(process.cwd(), ".data", "kestrel.db");
+    await mkdir(path.dirname(dataFile), { recursive: true });
+    console.log(
+      "TURSO_DATABASE_URL not set: migrating local SQLite (.data/kestrel.db)...",
+    );
+    url = `file:${dataFile}`;
+  }
+
+  const client = createClient({
+    url,
+    authToken: tursoUrl ? tursoAuthToken : undefined,
+  });
+
+  try {
+    await client.execute("PRAGMA foreign_keys = ON;");
+    await migrate(drizzle(client), { migrationsFolder });
+  } finally {
+    client.close();
   }
 
   console.log("Migrations applied.");
 }
 
 main().catch((error: unknown) => {
-  console.error("Migration failed:", error instanceof Error ? error.message : error);
+  console.error(
+    "Migration failed:",
+    error instanceof Error ? error.message : error,
+  );
   process.exit(1);
 });

@@ -1,35 +1,37 @@
 /**
- * Database client.
+ * Database client (Turso / libSQL / SQLite).
  *
- *  - Production / hosted: node-postgres against DATABASE_URL (Neon, Supabase).
- *  - Local development without DATABASE_URL: embedded PGlite in .data/pglite,
- *    with migrations applied automatically on first connect so there is zero
- *    setup.
+ *  - Production / hosted: `@libsql/client` against `TURSO_DATABASE_URL` +
+ *    `TURSO_AUTH_TOKEN`.
+ *  - Local development without `TURSO_DATABASE_URL`: local embedded libSQL
+ *    SQLite file in `.data/kestrel.db`, with migrations applied automatically
+ *    on first connect so there is zero setup.
  *
  * SERVER ONLY. The browser never talks to the database. Do not import this
  * from a client component.
  */
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { drizzle as drizzleNodePostgres } from "drizzle-orm/node-postgres";
-import type { PgDatabase } from "drizzle-orm/pg-core";
-import { Pool } from "pg";
+import { createClient } from "@libsql/client";
+import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import * as schema from "@/db/schema";
 import { getEnv } from "@/lib/env";
 
-// The two drivers expose different query-result types, but the query builder
-// API we use is identical. `any` is confined to this single alias on purpose.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Database = PgDatabase<any, typeof schema>;
+export type Database = LibSQLDatabase<typeof schema>;
 
-export type DatabaseKind = "postgres" | "pglite";
+export type DatabaseKind = "turso" | "local-sqlite";
 
-export const migrationsFolder = path.join(process.cwd(), "db", "migrations");
-export const pgliteDataDirectory = path.join(process.cwd(), ".data", "pglite");
+export const migrationsFolder = path.join(
+  process.cwd(),
+  "db",
+  "migrations-sqlite",
+);
+export const localSqlitePath = path.join(process.cwd(), ".data", "kestrel.db");
 
 /**
- * Keep one connection across hot reloads in development and across warm
- * invocations on serverless, so we do not open a new pool for every request.
+ * Keep one client across hot reloads in development and across warm
+ * invocations on serverless.
  */
 type GlobalWithDatabase = typeof globalThis & {
   __folioDatabase?: Promise<Database>;
@@ -37,40 +39,25 @@ type GlobalWithDatabase = typeof globalThis & {
 
 const globalScope = globalThis as GlobalWithDatabase;
 
-export function normalizePostgresSslMode(connectionString: string): string {
-  return connectionString.replace(
-    /([?&]sslmode=)(?:require|prefer|verify-ca)(?=&|$)/gi,
-    "$1verify-full",
-  );
+async function createTursoDatabase(
+  url: string,
+  authToken?: string,
+): Promise<Database> {
+  const client = createClient({
+    url,
+    authToken,
+  });
+  await client.execute("PRAGMA foreign_keys = ON;");
+  return drizzle(client, { schema });
 }
 
-async function createPostgresDatabase(connectionString: string): Promise<Database> {
-  // A tiny pool: serverless functions are short-lived, and hosted free tiers
-  // have low connection limits. Use the provider's *pooled* connection string.
-  const pool = new Pool({
-    connectionString: normalizePostgresSslMode(connectionString),
-    max: 3,
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 15_000,
+async function createLocalSqliteDatabase(): Promise<Database> {
+  await mkdir(path.dirname(localSqlitePath), { recursive: true });
+
+  const client = createClient({
+    url: `file:${localSqlitePath}`,
   });
-  // Neon closes idle connections when scaling compute to zero; handle idle
-  // client errors so Node does not throw an unhandled EventEmitter error.
-  pool.on("error", (error) => {
-    console.error("Postgres pool idle client error:", error.message);
-  });
-  return drizzleNodePostgres(pool, { schema });
-}
-
-async function createPgliteDatabase(): Promise<Database> {
-  // Imported dynamically so production bundles never load the WASM database.
-  const { PGlite } = await import("@electric-sql/pglite");
-  const { drizzle } = await import("drizzle-orm/pglite");
-  const { migrate } = await import("drizzle-orm/pglite/migrator");
-
-  // PGlite creates its own folder but not the parent, so make sure it exists.
-  await mkdir(path.dirname(pgliteDataDirectory), { recursive: true });
-
-  const client = new PGlite(pgliteDataDirectory);
+  await client.execute("PRAGMA foreign_keys = ON;");
   const database = drizzle(client, { schema });
 
   // Local convenience: keep the dev database up to date automatically.
@@ -78,18 +65,31 @@ async function createPgliteDatabase(): Promise<Database> {
   return database;
 }
 
+/**
+ * Creates an isolated in-memory libSQL/SQLite database with foreign keys
+ * enabled and all SQLite migrations applied. Intended for unit/integration tests.
+ */
+export async function createInMemoryTestDatabase(): Promise<Database> {
+  const client = createClient({ url: ":memory:" });
+  await client.execute("PRAGMA foreign_keys = ON;");
+  const database = drizzle(client, { schema });
+  await migrate(database, { migrationsFolder });
+  return database;
+}
+
 export function getDatabaseKind(): DatabaseKind {
-  return getEnv().DATABASE_URL === undefined ? "pglite" : "postgres";
+  return getEnv().TURSO_DATABASE_URL === undefined ? "local-sqlite" : "turso";
 }
 
 export function getDb(): Promise<Database> {
   if (globalScope.__folioDatabase === undefined) {
-    const connectionString = getEnv().DATABASE_URL;
+    const env = getEnv();
+    const tursoUrl = env.TURSO_DATABASE_URL;
 
     globalScope.__folioDatabase =
-      connectionString === undefined
-        ? createPgliteDatabase()
-        : createPostgresDatabase(connectionString);
+      tursoUrl === undefined
+        ? createLocalSqliteDatabase()
+        : createTursoDatabase(tursoUrl, env.TURSO_AUTH_TOKEN);
 
     // If connecting fails, forget the failed promise so the next request retries.
     globalScope.__folioDatabase.catch(() => {

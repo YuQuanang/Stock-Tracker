@@ -1,9 +1,5 @@
-import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StockDetailView } from "@/components/holdings/stock-detail-view";
 
@@ -17,8 +13,7 @@ vi.mock("next/navigation", () => ({
     prefetch: () => {},
   }),
 }));
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import { computePortfolioAnalytics } from "@/lib/services/analytics";
 import {
   clearDividendSyncCaches,
@@ -34,23 +29,12 @@ import {
   updateTransaction,
 } from "@/lib/services/ledger";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
-
 describe("Automatic Dividend Discovery, Withholding Tax & Deduplication", () => {
   let db: Database;
 
   beforeEach(async () => {
     clearDividendSyncCaches();
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    db = pgliteDb as unknown as Database;
+    db = await createInMemoryTestDatabase();
   });
 
   it("applies 0% withholding tax to SGX (.SI/SGD) and 30% to US/USD holdings including TCEHY", () => {

@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import { toDecimal } from "@/lib/finance";
 import {
   clearQuoteCache,
@@ -32,13 +28,6 @@ import {
   type SerializedWatchlistItem,
 } from "@/lib/watchlist/valuation";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 const fixturePath = path.join(
   import.meta.dirname,
   "..",
@@ -137,9 +126,7 @@ describe("Milestone 6: Watchlist Service, Valuation, Paper Simulator & Alerts", 
 
   beforeEach(async () => {
     clearQuoteCache();
-    const client = new PGlite();
-    db = drizzle(client, { schema }) as unknown as Database;
-    await migrate(db as never, { migrationsFolder });
+    db = await createInMemoryTestDatabase();
     await commitCsvImport(
       {
         filename: "MSP-Portfolios-2026-11-07.csv",

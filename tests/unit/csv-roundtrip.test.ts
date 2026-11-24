@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import { writeRejectedRowsCsv } from "@/lib/csv";
 import {
   commitCsvImport,
@@ -27,13 +23,6 @@ import {
   updateInstrumentOverrides,
 } from "@/lib/services/ledger";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 const fixturePath = path.join(
   import.meta.dirname,
   "..",
@@ -46,10 +35,7 @@ describe("Milestone 3: Lossless MSP CSV Import, Export, Validation, Backup & Und
   let db: Database;
 
   beforeEach(async () => {
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    db = pgliteDb as unknown as Database;
+    db = await createInMemoryTestDatabase();
   });
 
   it("round-trips MSP-Portfolios-2026-11-07.csv 100% byte-for-byte across all 273 rows", async () => {

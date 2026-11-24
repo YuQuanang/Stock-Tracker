@@ -155,8 +155,8 @@ describe("isSameOriginRequest and env sanitization", () => {
   });
 
   it("trims whitespace and surrounding quotes from pasted env variables", () => {
-    expect(sanitizeTrimmedEnvValue('  "postgresql://user:pass@host/db"  ')).toBe(
-      "postgresql://user:pass@host/db",
+    expect(sanitizeTrimmedEnvValue('  "libsql://kestrel-test.turso.io"  ')).toBe(
+      "libsql://kestrel-test.turso.io",
     );
     expect(sanitizeTrimmedEnvValue("  my-session-secret-0123456789abcdef012345  ")).toBe(
       "my-session-secret-0123456789abcdef012345",

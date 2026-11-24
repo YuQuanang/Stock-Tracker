@@ -1,12 +1,11 @@
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
-  dialect: "postgresql",
+  dialect: "turso",
   schema: "./db/schema.ts",
-  out: "./db/migrations",
-  // Only needed for `drizzle-kit studio` / `push`. `generate` does not connect.
+  out: "./db/migrations-sqlite",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://localhost:5432/folio",
+    url: process.env.TURSO_DATABASE_URL ?? "file:.data/kestrel.db",
+    authToken: process.env.TURSO_AUTH_TOKEN,
   },
 });
-

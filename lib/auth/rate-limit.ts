@@ -3,7 +3,7 @@
  *
  * Serverless instances do not share memory, so an in-memory counter would let
  * an attacker reset it just by hitting a different instance. Storing attempts
- * in Postgres makes the limit reliable.
+ * in the database makes the limit reliable.
  *
  * Two independent limits apply:
  *   - per client IP:   5 failures in 15 minutes
@@ -31,8 +31,8 @@ async function countRecentFailures(key: string): Promise<{ count: number; oldest
 
   const rows = await database
     .select({
-      count: sql<number>`count(*)::int`,
-      oldest: sql<Date | null>`min(${loginAttempt.attemptedAt})`,
+      count: sql<number>`count(*)`,
+      oldest: sql<number | null>`min(${loginAttempt.attemptedAt})`,
     })
     .from(loginAttempt)
     .where(
@@ -45,8 +45,11 @@ async function countRecentFailures(key: string): Promise<{ count: number; oldest
 
   const row = rows[0];
   return {
-    count: row?.count ?? 0,
-    oldest: row?.oldest ? new Date(row.oldest) : null,
+    count: Number(row?.count ?? 0),
+    oldest:
+      row?.oldest !== null && row?.oldest !== undefined
+        ? new Date(row.oldest)
+        : null,
   };
 }
 

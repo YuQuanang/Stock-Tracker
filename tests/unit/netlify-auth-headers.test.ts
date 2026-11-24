@@ -29,7 +29,8 @@ describe("Netlify headers, proxy redirects, and hydration-safe scripts", () => {
 
   it("sets no-cache headers and https protocol on auth redirects in production", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("DATABASE_URL", "postgres://user:pass@localhost:5432/kestrel");
+    vi.stubEnv("TURSO_DATABASE_URL", "libsql://kestrel-test.turso.io");
+    vi.stubEnv("TURSO_AUTH_TOKEN", "test-turso-auth-token");
     vi.stubEnv("SESSION_SECRET", "super-secret-signing-key-at-least-32-chars");
     vi.stubEnv("APP_PASSWORD", "test-password-2898");
     vi.resetModules();

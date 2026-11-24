@@ -156,7 +156,7 @@ export async function ensureHistoricalUsdSgdRates(params: {
       fetchImpl: params.fetchImpl,
     });
 
-    const BATCH_SIZE = 250;
+    const BATCH_SIZE = 150;
     for (let i = 0; i < fetchedBars.length; i += BATCH_SIZE) {
       const chunk = fetchedBars.slice(i, i + BATCH_SIZE);
       await params.database

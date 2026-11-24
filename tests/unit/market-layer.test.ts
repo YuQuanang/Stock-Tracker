@@ -1,10 +1,6 @@
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
   clearFundamentalsCache,
@@ -22,14 +18,6 @@ import {
   updateInstrumentOverrides,
 } from "@/lib/services/ledger";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
-
 describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History Cache, Fundamentals & Batch Quotes)", () => {
   let db: Database;
 
@@ -38,10 +26,7 @@ describe("Milestone 4: Market Data Layer (ProviderChain, Market Hours, History C
     clearHistoryCaches();
     clearFundamentalsCache();
 
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    db = pgliteDb as unknown as Database;
+    db = await createInMemoryTestDatabase();
   });
 
   it("trips circuit breaker on HTTP 429 rate-limit, ignores not_found, and recovers after cooldown", async () => {

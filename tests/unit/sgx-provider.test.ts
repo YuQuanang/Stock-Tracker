@@ -1,10 +1,6 @@
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Database } from "@/db/client";
+import { createInMemoryTestDatabase } from "@/db/client";
 import * as schema from "@/db/schema";
 import { filterPointsByAnalyticsRange } from "@/lib/charts/theme";
 import {
@@ -28,14 +24,6 @@ import {
   migrateInstrumentSymbol,
 } from "@/lib/services/ledger";
 import { addWatchlistItem } from "@/lib/services/watchlist";
-
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 
 describe("SGX market-data coverage (TradingView provider & J91U.SI -> 9A4U.SI transition)", () => {
   beforeEach(() => {
@@ -285,10 +273,7 @@ describe("SGX market-data coverage (TradingView provider & J91U.SI -> 9A4U.SI tr
   });
 
   it("migrates retired J91U.SI -> 9A4U.SI across portfolios, records 1:10 consolidation, and preserves cost basis", async () => {
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    const db = pgliteDb as unknown as Database;
+    const db = await createInMemoryTestDatabase();
 
     const currentPf = await createPortfolio(
       { name: "Current", type: "holdings", defaultCurrency: "SGD" },

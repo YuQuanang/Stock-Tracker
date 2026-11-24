@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Unable to reach the database. Check DATABASE_URL in your hosting environment variables and redeploy.",
+          "Unable to reach the database. Check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in your hosting environment variables and redeploy.",
       },
       { status: 503 },
     );

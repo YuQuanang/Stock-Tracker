@@ -2,7 +2,7 @@
  * Historical Price Series & Persistent `price_bar` Cache (`lib/market-data/history.ts`).
  *
  * Responsibilities:
- *  1. Fetches and caches **unadjusted** daily OHLCV bars in the PostgreSQL
+ *  1. Fetches and caches **unadjusted** daily OHLCV bars in the database
  *     `price_bar` table (`(instrument_id, date)`) so portfolio valuation,
  *     benchmark comparison, 52-week ranges, and multi-year stock charts load
  *     instantly from the database without re-fetching years of history.
@@ -590,7 +590,7 @@ export async function upsertDailyPriceBars(
     return;
   }
 
-  const BATCH_SIZE = 200;
+  const BATCH_SIZE = 100;
   for (let offset = 0; offset < bars.length; offset += BATCH_SIZE) {
     const chunk = bars.slice(offset, offset + BATCH_SIZE);
     await database

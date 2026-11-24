@@ -1,10 +1,5 @@
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import {
   adjustPortfolioHolding,
   computeLedgerSummaries,
@@ -24,16 +19,11 @@ import {
 } from "@/lib/services/ledger";
 import { updateSettings } from "@/lib/services/settings";
 
-const migrationsFolder = path.join(import.meta.dirname, "..", "..", "db", "migrations");
-
 describe("Ledger service CRUD and FIFO rollback invariants", () => {
   let db: Database;
 
   beforeEach(async () => {
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    db = pgliteDb as unknown as Database;
+    db = await createInMemoryTestDatabase();
   });
 
   it("creates independent portfolios, records transactions, and computes summaries", async () => {

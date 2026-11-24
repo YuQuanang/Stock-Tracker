@@ -1,11 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import { toDecimal } from "@/lib/finance";
 import { formatCompactMoney, formatCompactNumber } from "@/lib/format";
@@ -18,13 +15,6 @@ import {
   updateInstrumentOverrides,
 } from "@/lib/services/ledger";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 const fixturePath = path.join(
   import.meta.dirname,
   "..",
@@ -73,9 +63,7 @@ describe("Holdings FIFO Buckets & Client/Server Valuation Mapper", () => {
   let db: Database;
 
   beforeEach(async () => {
-    const client = new PGlite();
-    db = drizzle(client, { schema }) as unknown as Database;
-    await migrate(db as never, { migrationsFolder });
+    db = await createInMemoryTestDatabase();
     await commitCsvImport(
       {
         filename: "MSP-Portfolios-2026-11-07.csv",

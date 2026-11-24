@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import { toDecimal, toDecimalString, ZERO } from "@/lib/finance";
 import {
   commitCsvImport,
@@ -19,13 +15,6 @@ import {
   listEnrichedTransactions,
 } from "@/lib/services/ledger";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 const fixturePath = path.join(
   import.meta.dirname,
   "..",
@@ -128,10 +117,7 @@ describe("Historical USD -> SGD Total Calculation Across Imported & Manual Trans
   let db: Database;
 
   beforeEach(async () => {
-    const client = new PGlite();
-    const pgliteDb = drizzle(client, { schema });
-    await migrate(pgliteDb, { migrationsFolder });
-    db = pgliteDb as unknown as Database;
+    db = await createInMemoryTestDatabase();
   });
 
   it("calculates fxRateToSgd and totalCostSgd for all 220 imported MSP CSV transactions using trade-date FX while preserving 100% lossless export", async () => {

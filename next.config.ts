@@ -41,8 +41,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  // These packages use native/WASM assets and must not be bundled.
-  serverExternalPackages: ["@electric-sql/pglite", "pg"],
+  // Keep @libsql/client external so native/runtime bindings are not bundled.
+  serverExternalPackages: ["@libsql/client"],
 
   async headers() {
     return [

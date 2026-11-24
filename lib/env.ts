@@ -11,7 +11,7 @@ import { z } from "zod";
  */
 
 /**
- * Treat empty strings (e.g. a bare `DATABASE_URL=` line in .env) as "not set".
+ * Treat empty strings (e.g. a bare `TURSO_DATABASE_URL=` line in .env) as "not set".
  */
 function emptyStringToUndefined(value: unknown): unknown {
   if (typeof value === "string" && value.trim() === "") {
@@ -51,9 +51,10 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
-    // Postgres connection string. When absent in development we fall back to
-    // an embedded PGlite database stored under .data/pglite.
-    DATABASE_URL: optionalSanitizedString,
+    // Turso / libSQL connection URL and auth token. When absent in development
+    // we fall back to a local SQLite file stored under `.data/kestrel.db`.
+    TURSO_DATABASE_URL: optionalSanitizedString,
+    TURSO_AUTH_TOKEN: optionalSanitizedString,
 
     // Single-user password gate. Provide EITHER a scrypt hash (preferred,
     // generate with `npm run hash-password`) OR a plain password for quick
@@ -64,7 +65,7 @@ const envSchema = z
     // Secret used to sign the session cookie (>= 32 characters).
     SESSION_SECRET: optionalSanitizedString,
 
-    // Optional provider keys (used from Milestone 4 onwards).
+    // Optional provider keys.
     FINNHUB_API_KEY: optionalSanitizedString,
   })
   .superRefine((env, context) => {
@@ -96,12 +97,22 @@ const envSchema = z
           message: "SESSION_SECRET is required in production.",
         });
       }
-      if (env.DATABASE_URL === undefined) {
+      if (env.TURSO_DATABASE_URL === undefined) {
         context.addIssue({
           code: "custom",
-          path: ["DATABASE_URL"],
+          path: ["TURSO_DATABASE_URL"],
           message:
-            "DATABASE_URL is required in production (PGlite is for local development only).",
+            "TURSO_DATABASE_URL is required in production (local SQLite is for development only).",
+        });
+      } else if (
+        /^(libsql|https|wss):\/\//i.test(env.TURSO_DATABASE_URL) &&
+        env.TURSO_AUTH_TOKEN === undefined
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["TURSO_AUTH_TOKEN"],
+          message:
+            "TURSO_AUTH_TOKEN is required in production for remote Turso URLs.",
         });
       }
     }
@@ -122,7 +133,8 @@ export function getEnv(): ServerEnv {
 
   const parsed = envSchema.safeParse({
     NODE_ENV: process.env.NODE_ENV,
-    DATABASE_URL: process.env.DATABASE_URL,
+    TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
+    TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
     APP_PASSWORD_HASH: process.env.APP_PASSWORD_HASH,
     APP_PASSWORD: process.env.APP_PASSWORD,
     SESSION_SECRET: process.env.SESSION_SECRET,
@@ -139,4 +151,3 @@ export function getEnv(): ServerEnv {
   cachedEnv = parsed.data;
   return cachedEnv;
 }
-

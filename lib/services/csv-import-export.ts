@@ -4,13 +4,13 @@
  * Implements Section 7 of the Folio specification:
  *  - Preview step (no database writes) with per-portfolio counts, duplicate
  *    detection, data-quality warnings, and per-row error reporting
- *  - Atomic commit inside a PostgreSQL transaction (`skip`, `replace`, `append`)
+ *  - Atomic commit inside a database transaction (`skip`, `replace`, `append`)
  *  - Lossless 19-column Microsoft Start (`MSP-Portfolios-YYYY-MM-DD.csv`) export
  *  - Clean modern CSV export (with formula-injection protection)
  *  - One-click full JSON backup export
  *  - Atomic Undo Import (`csv_import_log` rollback with FIFO invariant check)
  */
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { type Database, getDb } from "@/db/client";
 import {
   corporateAction,
@@ -882,18 +882,16 @@ export async function undoCsvImport(
       .where(eq(portfolio.createdByImportId, importId));
 
     for (const p of candidatePortfolios) {
-      const [remainingPi, remainingTx] = await Promise.all([
-        txDatabase
-          .select({ instrumentId: portfolioInstrument.instrumentId })
-          .from(portfolioInstrument)
-          .where(eq(portfolioInstrument.portfolioId, p.id))
-          .limit(1),
-        txDatabase
-          .select({ id: transaction.id })
-          .from(transaction)
-          .where(eq(transaction.portfolioId, p.id))
-          .limit(1),
-      ]);
+      const remainingPi = await txDatabase
+        .select({ instrumentId: portfolioInstrument.instrumentId })
+        .from(portfolioInstrument)
+        .where(eq(portfolioInstrument.portfolioId, p.id))
+        .limit(1);
+      const remainingTx = await txDatabase
+        .select({ id: transaction.id })
+        .from(transaction)
+        .where(eq(transaction.portfolioId, p.id))
+        .limit(1);
 
       if (remainingPi.length === 0 && remainingTx.length === 0) {
         await txDatabase.delete(portfolio).where(eq(portfolio.id, p.id));
@@ -908,28 +906,26 @@ export async function undoCsvImport(
     }
 
     for (const item of allInstruments) {
-      const [refPi, refTx, refAction, refBar] = await Promise.all([
-        txDatabase
-          .select({ portfolioId: portfolioInstrument.portfolioId })
-          .from(portfolioInstrument)
-          .where(eq(portfolioInstrument.instrumentId, item.id))
-          .limit(1),
-        txDatabase
-          .select({ id: transaction.id })
-          .from(transaction)
-          .where(eq(transaction.instrumentId, item.id))
-          .limit(1),
-        txDatabase
-          .select({ id: corporateAction.id })
-          .from(corporateAction)
-          .where(eq(corporateAction.instrumentId, item.id))
-          .limit(1),
-        txDatabase
-          .select({ date: priceBar.date })
-          .from(priceBar)
-          .where(eq(priceBar.instrumentId, item.id))
-          .limit(1),
-      ]);
+      const refPi = await txDatabase
+        .select({ portfolioId: portfolioInstrument.portfolioId })
+        .from(portfolioInstrument)
+        .where(eq(portfolioInstrument.instrumentId, item.id))
+        .limit(1);
+      const refTx = await txDatabase
+        .select({ id: transaction.id })
+        .from(transaction)
+        .where(eq(transaction.instrumentId, item.id))
+        .limit(1);
+      const refAction = await txDatabase
+        .select({ id: corporateAction.id })
+        .from(corporateAction)
+        .where(eq(corporateAction.instrumentId, item.id))
+        .limit(1);
+      const refBar = await txDatabase
+        .select({ date: priceBar.date })
+        .from(priceBar)
+        .where(eq(priceBar.instrumentId, item.id))
+        .limit(1);
 
       if (
         refPi.length === 0 &&
@@ -1051,7 +1047,7 @@ export async function exportMspCsvFromDb(
       .innerJoin(instrument, eq(transaction.instrumentId, instrument.id))
       .orderBy(
         asc(transaction.executedAt),
-        asc(transaction.sourceRowId),
+        sql`${transaction.sourceRowId} ASC NULLS LAST`,
         asc(transaction.createdAt),
       ),
   ]);
@@ -1224,7 +1220,10 @@ export async function exportFullBackupJson(
     database
       .select()
       .from(transaction)
-      .orderBy(asc(transaction.executedAt), asc(transaction.sourceRowId)),
+      .orderBy(
+        asc(transaction.executedAt),
+        sql`${transaction.sourceRowId} ASC NULLS LAST`,
+      ),
     database
       .select()
       .from(corporateAction)

@@ -2,15 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BenchmarksView } from "@/components/benchmarks/benchmarks-view";
 import { BenchmarkComparisonChart } from "@/components/charts/benchmark-comparison-chart";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
-import type { Database } from "@/db/client";
-import * as schema from "@/db/schema";
+import { createInMemoryTestDatabase, type Database } from "@/db/client";
 import { filterPointsByAnalyticsRange } from "@/lib/charts/theme";
 import {
   clearFxCache,
@@ -27,13 +23,6 @@ import {
 } from "@/lib/services/ledger";
 import { deleteAllPortfolioData, updateSettings } from "@/lib/services/settings";
 
-const migrationsFolder = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "db",
-  "migrations",
-);
 const fixturePath = path.join(
   import.meta.dirname,
   "..",
@@ -182,9 +171,7 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
   });
 
   beforeEach(async () => {
-    const client = new PGlite();
-    db = drizzle(client, { schema }) as unknown as Database;
-    await migrate(db as never, { migrationsFolder });
+    db = await createInMemoryTestDatabase();
   });
 
   it("returns empty onboarding state when no transactions exist", async () => {
