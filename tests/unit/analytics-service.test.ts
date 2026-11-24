@@ -19,7 +19,12 @@ import {
 } from "@/lib/market-data";
 import { computePortfolioAnalytics } from "@/lib/services/analytics";
 import { commitCsvImport } from "@/lib/services/csv-import-export";
-import { getOrCreateSettings } from "@/lib/services/ledger";
+import {
+  createPortfolio,
+  deletePortfolio,
+  getOrCreateSettings,
+  listPortfolios,
+} from "@/lib/services/ledger";
 import { deleteAllPortfolioData, updateSettings } from "@/lib/services/settings";
 
 const migrationsFolder = path.join(
@@ -443,4 +448,88 @@ describe("Analytics & Settings Services (Milestone 7)", () => {
     expect(postDelete.accountHasNoTransactions).toBe(true);
     expect(postDelete.portfolios).toHaveLength(0);
   });
+
+  it("uses persisted defaultPortfolioId across analytics and resets to all when that portfolio is deleted", async () => {
+    const fetchImpl = createOfflineAnalyticsFetch();
+    await commitCsvImport(
+      {
+        filename: "MSP-Portfolios-2026-11-07.csv",
+        csvText: fixtureCsv,
+        duplicateMode: "replace",
+        fetchImpl,
+      },
+      db,
+    );
+
+    const allPortfolios = await listPortfolios(db);
+    const usStocks = allPortfolios.find(
+      (p) => p.type === "holdings" && p.name === "US Stocks",
+    );
+    const watchlist = allPortfolios.find((p) => p.type === "watchlist");
+    expect(usStocks).toBeDefined();
+    expect(watchlist).toBeDefined();
+
+    // Watchlists cannot be chosen as the default holdings portfolio
+    await expect(
+      updateSettings({ defaultPortfolioId: watchlist!.id }, db),
+    ).rejects.toThrow(/holdings portfolio/i);
+
+    await updateSettings({ defaultPortfolioId: usStocks!.id }, db);
+
+    // Calling computePortfolioAnalytics without portfolioId loads the configured default portfolio
+    const defaultScoped = await computePortfolioAnalytics({
+      includeBenchmarks: false,
+      includeFundamentals: false,
+      cacheOnly: true,
+      db,
+      now: new Date("2026-11-06T12:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(defaultScoped.scope.portfolioFilterId).toBe(usStocks!.id);
+    expect(defaultScoped.scope.portfolioName).toBe("US Stocks");
+
+    // Explicitly passing portfolioId: "all" still shows All Portfolios
+    const explicitAll = await computePortfolioAnalytics({
+      portfolioId: "all",
+      includeBenchmarks: false,
+      includeFundamentals: false,
+      cacheOnly: true,
+      db,
+      now: new Date("2026-11-06T12:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(explicitAll.scope.portfolioFilterId).toBe("all");
+    expect(explicitAll.scope.portfolioName).toBe("All Portfolios");
+
+    // Deleting the default portfolio falls back to "all" cleanly
+    await deletePortfolio(usStocks!.id, db);
+    const afterDelete = await computePortfolioAnalytics({
+      includeBenchmarks: false,
+      includeFundamentals: false,
+      cacheOnly: true,
+      db,
+      now: new Date("2026-11-06T12:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(afterDelete.scope.portfolioFilterId).toBe("all");
+    expect(afterDelete.settings.defaultPortfolioId).toBe("all");
+
+    // Empty newly created holdings portfolio can still be set as default
+    const emptyPortfolio = await createPortfolio(
+      { name: "Fresh Portfolio", type: "holdings", defaultCurrency: "SGD" },
+      db,
+    );
+    await updateSettings({ defaultPortfolioId: emptyPortfolio.id }, db);
+    const emptyScoped = await computePortfolioAnalytics({
+      includeBenchmarks: false,
+      includeFundamentals: false,
+      cacheOnly: true,
+      db,
+      now: new Date("2026-11-06T12:00:00.000Z"),
+      fetchImpl,
+    });
+    expect(emptyScoped.scope.portfolioFilterId).toBe(emptyPortfolio.id);
+    expect(emptyScoped.isEmpty).toBe(true);
+    expect(emptyScoped.accountHasNoTransactions).toBe(false);
+  }, 20_000);
 });

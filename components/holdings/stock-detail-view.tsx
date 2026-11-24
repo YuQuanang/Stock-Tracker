@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRightLeft,
+  Pencil,
   Plus,
   RefreshCw,
   SlidersHorizontal,
@@ -12,6 +13,10 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { InteractivePriceChart } from "@/components/charts/interactive-price-chart";
+import {
+  EditHoldingSheet,
+  type EditHoldingTarget,
+} from "@/components/holdings/edit-holding-sheet";
 import { InlineTransactionRow } from "@/components/holdings/inline-transaction-row";
 import {
   TickerMigrationSheet,
@@ -85,6 +90,7 @@ function compute52WeekPercentPosition(params: {
 export function StockDetailView({
   instrument,
   portfolios,
+  defaultPortfolioId = "all",
   buckets,
   transactions,
   corporateActions,
@@ -97,7 +103,9 @@ export function StockDetailView({
 }: StockDetailSnapshot) {
   const router = useRouter();
 
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("all");
+  const [selectedPortfolioId, setSelectedPortfolioId] =
+    useState<string>(defaultPortfolioId);
+  const [isEditHoldingOpen, setIsEditHoldingOpen] = useState(false);
   const [ledgerTab, setLedgerTab] = useState<DetailLedgerTab>(() => {
     const hasOpen = buckets.some((b) => b.openLots.length > 0);
     if (hasOpen) {
@@ -529,6 +537,17 @@ export function StockDetailView({
         </button>
 
         <div className="flex flex-wrap items-center gap-2">
+          {holdingsPortfolios.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsEditHoldingOpen(true)}
+            >
+              <Pencil size={15} strokeWidth={1.9} aria-hidden="true" />
+              <span>Edit holding</span>
+            </Button>
+          )}
+
           <Button
             variant="secondary"
             size="sm"
@@ -1652,6 +1671,55 @@ export function StockDetailView({
           </div>
         </form>
       </Sheet>
+
+      <EditHoldingSheet
+        isOpen={isEditHoldingOpen}
+        target={
+          {
+            symbol: instrument.symbol,
+            name: instrument.name ?? fundamentals.name,
+            exchangeCode:
+              instrument.exchangeCode ?? fundamentals.exchangeName,
+            currency: instrument.currency,
+            initialPortfolioId:
+              selectedPortfolioId !== "all"
+                ? selectedPortfolioId
+                : (buckets.find((b) => Number(b.sharesHeld) > 0)?.portfolioId ??
+                  symbolPortfolios[0]?.id ??
+                  holdingsPortfolios[0]?.id ??
+                  ""),
+            positionsByPortfolio: buckets.map((b) => {
+              const sharesDec = toDecimal(b.sharesHeld);
+              const costDec = toDecimal(b.openCostBasis);
+              const avgCost = sharesDec.gt(0)
+                ? toNullableDecimalString(safeDivide(costDec, sharesDec), 6)
+                : null;
+              const effectiveFx =
+                baseCurrency === "SGD" &&
+                b.currency.toUpperCase() !== "SGD" &&
+                b.openCostBasisInBase &&
+                costDec.gt(0)
+                  ? toNullableDecimalString(
+                      safeDivide(toDecimal(b.openCostBasisInBase), costDec),
+                      6,
+                    )
+                  : null;
+              return {
+                portfolioId: b.portfolioId,
+                portfolioName: b.portfolioName,
+                sharesHeld: b.sharesHeld,
+                averageCostPerShare: avgCost,
+                openCostBasis: b.openCostBasis,
+                effectiveFxRateToSgd: effectiveFx,
+              };
+            }),
+          } satisfies EditHoldingTarget
+        }
+        portfolios={holdingsPortfolios}
+        currentUsdToSgdRate={fxUsdToSgd?.rate ?? null}
+        onClose={() => setIsEditHoldingOpen(false)}
+        onSaved={() => router.refresh()}
+      />
 
       {/* Record New Transaction Sheet */}
       <TransactionSheet

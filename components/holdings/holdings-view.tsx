@@ -21,6 +21,10 @@ import {
 import type { Portfolio } from "@/db/schema";
 import { Sparkline } from "@/components/charts/sparkline";
 import {
+  EditHoldingSheet,
+  type EditHoldingTarget,
+} from "@/components/holdings/edit-holding-sheet";
+import {
   TickerMigrationSheet,
   type TickerMigrationTarget,
 } from "@/components/holdings/ticker-migration-sheet";
@@ -44,7 +48,9 @@ import {
 import {
   buildValuedHoldings,
   type SerializedFifoBucket,
+  type ValuedHoldingRow,
 } from "@/lib/holdings/valuation";
+import { safeDivide, toDecimal, toNullableDecimalString, ZERO } from "@/lib/finance";
 import type { ResolvedInstrumentQuote } from "@/lib/market-data/batch-quotes";
 import type { ExchangeRateSnapshot } from "@/lib/market-data/fx";
 import type { CombinedMarketOverview } from "@/lib/market-data/hours";
@@ -93,6 +99,7 @@ function persistHoldingsSort(field: SortField, direction: SortDirection): void {
 
 interface HoldingsViewProps {
   portfolios: Portfolio[];
+  defaultPortfolioId?: string;
   buckets: SerializedFifoBucket[];
   initialQuotes: Record<string, ResolvedInstrumentQuote>;
   initialFxUsdToSgd: ExchangeRateSnapshot | null;
@@ -127,6 +134,7 @@ function FlashText({
 
 export function HoldingsView({
   portfolios,
+  defaultPortfolioId = "all",
   buckets,
   initialQuotes,
   initialFxUsdToSgd,
@@ -139,11 +147,16 @@ export function HoldingsView({
     [portfolios],
   );
 
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("all");
+  const [selectedPortfolioId, setSelectedPortfolioId] =
+    useState<string>(defaultPortfolioId);
+  const [activeDefaultPortfolioId, setActiveDefaultPortfolioId] =
+    useState<string>(defaultPortfolioId);
   const [activeTab, setActiveTab] = useState<PositionTab>("open");
   const [sortField, setSortField] = useState<SortField>("default");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [searchQuery, setSearchQuery] = useState("");
+  const [editHoldingTarget, setEditHoldingTarget] =
+    useState<EditHoldingTarget | null>(null);
 
   useEffect(() => {
     try {
@@ -444,6 +457,54 @@ export function HoldingsView({
     pricedVisibleRows.length === 0 &&
     notFoundOpenRows.length > 0;
 
+  function openEditHoldingSheet(row: ValuedHoldingRow): void {
+    const symbolBuckets = buckets.filter((b) => b.symbol === row.symbol);
+    const positionsByPortfolio = symbolBuckets.map((b) => {
+      const sharesDec = toDecimal(b.sharesHeld);
+      const costDec = toDecimal(b.openCostBasis);
+      const avgCost = sharesDec.gt(ZERO)
+        ? toNullableDecimalString(safeDivide(costDec, sharesDec), 6)
+        : null;
+      const effectiveFx =
+        baseCurrency === "SGD" &&
+        b.currency.toUpperCase() !== "SGD" &&
+        b.openCostBasisInBase &&
+        costDec.gt(ZERO)
+          ? toNullableDecimalString(
+              safeDivide(toDecimal(b.openCostBasisInBase), costDec),
+              6,
+            )
+          : null;
+
+      return {
+        portfolioId: b.portfolioId,
+        portfolioName: b.portfolioName,
+        sharesHeld: b.sharesHeld,
+        averageCostPerShare: avgCost,
+        openCostBasis: b.openCostBasis,
+        effectiveFxRateToSgd: effectiveFx,
+      };
+    });
+
+    const preferredPortfolioId =
+      selectedPortfolioId !== "all" &&
+      holdingsPortfolios.some((p) => p.id === selectedPortfolioId)
+        ? selectedPortfolioId
+        : (positionsByPortfolio.find((p) => Number(p.sharesHeld) > 0)
+            ?.portfolioId ??
+          holdingsPortfolios[0]?.id ??
+          "");
+
+    setEditHoldingTarget({
+      symbol: row.symbol,
+      name: row.name,
+      exchangeCode: row.exchangeCode,
+      currency: row.currency,
+      initialPortfolioId: preferredPortfolioId,
+      positionsByPortfolio,
+    });
+  }
+
   function openOverrideSheet(symbol: string): void {
     const bucket = bucketBySymbol.get(symbol);
     if (!bucket) {
@@ -599,8 +660,22 @@ export function HoldingsView({
           isOpen={isPortfolioSheetOpen}
           portfolios={holdingsPortfolios}
           initialSelectedPortfolioId={selectedPortfolioId}
+          defaultPortfolioId={activeDefaultPortfolioId}
           onClose={() => setIsPortfolioSheetOpen(false)}
           onChanged={() => router.refresh()}
+          onCreated={(id) => setSelectedPortfolioId(id)}
+          onDeleted={(deleted) => {
+            if (selectedPortfolioId === deleted.id) {
+              setSelectedPortfolioId("all");
+            }
+            if (activeDefaultPortfolioId === deleted.id) {
+              setActiveDefaultPortfolioId("all");
+            }
+          }}
+          onDefaultChanged={(nextDefaultId) => {
+            setActiveDefaultPortfolioId(nextDefaultId);
+            setSelectedPortfolioId(nextDefaultId);
+          }}
         />
 
         <TransactionSheet
@@ -648,10 +723,10 @@ export function HoldingsView({
             variant="secondary"
             size="sm"
             onClick={() => setIsPortfolioSheetOpen(true)}
-            aria-label="Manage or rename portfolios"
+            aria-label="Manage portfolios"
           >
             <Pencil size={15} strokeWidth={1.9} aria-hidden="true" />
-            <span>{selectedPortfolioId !== "all" ? "Rename" : "Portfolios"}</span>
+            <span>Portfolios</span>
           </Button>
 
           <Button
@@ -872,69 +947,70 @@ export function HoldingsView({
             pricedVisibleRows.map((row) => {
             const detailHref = `/holdings/${encodeURIComponent(row.symbol)}`;
             return (
-              <Link
+              <div
                 key={row.key}
-                href={detailHref}
-                className="block px-4 py-3.5 transition-colors hover:bg-surface-2"
+                className="px-4 py-3.5 transition-colors hover:bg-surface-2"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[15px] font-semibold text-ink">
-                        {row.symbol}
-                      </span>
-                      {row.weightPercent && activeTab === "open" && (
-                        <span className="num rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-2">
-                          {formatPercent(row.weightPercent, {
-                            fractionDigits: 1,
-                          })}
+                <Link href={detailHref} className="block">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[15px] font-semibold text-ink">
+                          {row.symbol}
                         </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 truncate text-[12.5px] text-ink-2">
-                      {row.name ?? row.portfolioNames.join(", ")}
-                    </p>
-                  </div>
-
-                  <Sparkline
-                    values={row.sparklineCloses}
-                    width={68}
-                    height={26}
-                  />
-
-                  <div className="shrink-0 text-right">
-                    <FlashText
-                      value={row.marketValue ? Number(row.marketValue) : null}
-                    >
-                      <p className="num text-[15px] font-semibold text-ink">
-                        {activeTab === "open"
-                          ? row.marketValue
-                            ? formatMoney(row.marketValue, row.currency)
-                            : "Price unavailable"
-                          : formatMoney(row.realizedPnl, row.currency, {
-                              signed: true,
+                        {row.weightPercent && activeTab === "open" && (
+                          <span className="num rounded-[6px] bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-2">
+                            {formatPercent(row.weightPercent, {
+                              fractionDigits: 1,
                             })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate text-[12.5px] text-ink-2">
+                        {row.name ?? row.portfolioNames.join(", ")}
                       </p>
-                    </FlashText>
-                    <div className="mt-0.5 flex justify-end">
-                      {activeTab === "open" ? (
-                        <GainBadge
-                          amount={row.unrealizedPnl}
-                          currency={row.currency}
-                          percent={row.unrealizedPnlPercent}
-                          size="sm"
-                        />
-                      ) : (
-                        <GainBadge
-                          amount={row.totalReturn}
-                          currency={row.currency}
-                          percent={row.totalReturnPercent}
-                          size="sm"
-                        />
-                      )}
+                    </div>
+
+                    <Sparkline
+                      values={row.sparklineCloses}
+                      width={68}
+                      height={26}
+                    />
+
+                    <div className="shrink-0 text-right">
+                      <FlashText
+                        value={row.marketValue ? Number(row.marketValue) : null}
+                      >
+                        <p className="num text-[15px] font-semibold text-ink">
+                          {activeTab === "open"
+                            ? row.marketValue
+                              ? formatMoney(row.marketValue, row.currency)
+                              : "Price unavailable"
+                            : formatMoney(row.realizedPnl, row.currency, {
+                                signed: true,
+                              })}
+                        </p>
+                      </FlashText>
+                      <div className="mt-0.5 flex justify-end">
+                        {activeTab === "open" ? (
+                          <GainBadge
+                            amount={row.unrealizedPnl}
+                            currency={row.currency}
+                            percent={row.unrealizedPnlPercent}
+                            size="sm"
+                          />
+                        ) : (
+                          <GainBadge
+                            amount={row.totalReturn}
+                            currency={row.currency}
+                            percent={row.totalReturnPercent}
+                            size="sm"
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                </Link>
 
                 <div className="num mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] text-ink-2">
                   <span>
@@ -942,28 +1018,41 @@ export function HoldingsView({
                       ? `${formatQuantity(row.sharesHeld)} sh · Avg ${formatMoney(row.averageCostPerShare, row.currency)}`
                       : `${row.closedTradeCount} closed trade${row.closedTradeCount === 1 ? "" : "s"} · Div ${formatMoney(row.dividendsReceived, row.currency)}`}
                   </span>
-                  <span>
-                    {row.unitPrice ? (
-                      <>
-                        {formatMoney(row.unitPrice, row.currency)}{" "}
+                  <div className="flex items-center gap-2">
+                    <span>
+                      {row.unitPrice ? (
+                        <>
+                          {formatMoney(row.unitPrice, row.currency)}{" "}
+                          <span
+                            title={row.freshnessLabel}
+                            className="font-mono text-[11.5px] text-ink-3"
+                          >
+                            · {formatCompactFreshness(row.freshnessLabel)}
+                          </span>
+                        </>
+                      ) : (
                         <span
                           title={row.freshnessLabel}
-                          className="font-mono text-[11.5px] text-ink-3"
+                          className="text-ink-3"
                         >
-                          · {formatCompactFreshness(row.freshnessLabel)}
+                          {formatCompactFreshness(row.freshnessLabel)}
                         </span>
-                      </>
-                    ) : (
-                      <span
-                        title={row.freshnessLabel}
-                        className="text-ink-3"
+                      )}
+                    </span>
+                    {activeTab === "open" && holdingsPortfolios.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => openEditHoldingSheet(row)}
+                        aria-label={`Edit ${row.symbol} holding`}
+                        className="inline-flex items-center gap-1 rounded-[8px] border border-line bg-surface px-2 py-1 text-[11.5px] font-medium text-ink-2 transition-colors hover:border-line-strong hover:text-ink"
                       >
-                        {formatCompactFreshness(row.freshnessLabel)}
-                      </span>
+                        <Pencil size={11.5} strokeWidth={2} aria-hidden="true" />
+                        <span>Edit</span>
+                      </button>
                     )}
-                  </span>
+                  </div>
                 </div>
-              </Link>
+              </div>
             );
           })
         )}
@@ -1175,7 +1264,7 @@ export function HoldingsView({
                       </button>
                     </th>
                   )}
-                  <th className="w-6 py-2.5 pl-1 pr-3" aria-label="Open detail" />
+                  <th className="w-14 py-2.5 pl-1 pr-3" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -1394,7 +1483,28 @@ export function HoldingsView({
                       )}
 
                       <td className="py-3 pl-1 pr-3 text-right text-ink-2">
-                        <ChevronRight size={15} aria-hidden="true" />
+                        <div className="inline-flex items-center justify-end gap-1">
+                          {activeTab === "open" &&
+                            holdingsPortfolios.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openEditHoldingSheet(row);
+                                }}
+                                aria-label={`Edit ${row.symbol} holding`}
+                                title="Edit holding"
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-[8px] text-ink-2 transition-colors hover:bg-surface hover:text-ink"
+                              >
+                                <Pencil
+                                  size={13.5}
+                                  strokeWidth={1.9}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            )}
+                          <ChevronRight size={15} aria-hidden="true" />
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1596,6 +1706,21 @@ export function HoldingsView({
                       </Button>
                     )}
 
+                    {holdingsPortfolios.length > 0 && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => openEditHoldingSheet(row)}
+                      >
+                        <Pencil
+                          size={13}
+                          strokeWidth={1.9}
+                          aria-hidden="true"
+                        />
+                        <span>Edit</span>
+                      </Button>
+                    )}
+
                     {bucket && (
                       <Button
                         variant="tinted"
@@ -1722,8 +1847,31 @@ export function HoldingsView({
         isOpen={isPortfolioSheetOpen}
         portfolios={holdingsPortfolios}
         initialSelectedPortfolioId={selectedPortfolioId}
+        defaultPortfolioId={activeDefaultPortfolioId}
         onClose={() => setIsPortfolioSheetOpen(false)}
         onChanged={() => router.refresh()}
+        onCreated={(id) => setSelectedPortfolioId(id)}
+        onDeleted={(deleted) => {
+          if (selectedPortfolioId === deleted.id) {
+            setSelectedPortfolioId("all");
+          }
+          if (activeDefaultPortfolioId === deleted.id) {
+            setActiveDefaultPortfolioId("all");
+          }
+        }}
+        onDefaultChanged={(nextDefaultId) => {
+          setActiveDefaultPortfolioId(nextDefaultId);
+          setSelectedPortfolioId(nextDefaultId);
+        }}
+      />
+
+      <EditHoldingSheet
+        isOpen={editHoldingTarget !== null}
+        target={editHoldingTarget}
+        portfolios={holdingsPortfolios}
+        currentUsdToSgdRate={fxUsdToSgd?.rate ?? null}
+        onClose={() => setEditHoldingTarget(null)}
+        onSaved={() => router.refresh()}
       />
 
       <TransactionSheet

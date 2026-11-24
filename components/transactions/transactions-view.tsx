@@ -43,6 +43,7 @@ const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string }[] = [
 
 interface TransactionsViewProps {
   portfolios: Portfolio[];
+  defaultPortfolioId?: string;
   transactions: EnrichedTransactionRow[];
   positions: LedgerPositionSummary[];
   zeroCostBuys: {
@@ -57,6 +58,7 @@ interface TransactionsViewProps {
 
 export function TransactionsView({
   portfolios,
+  defaultPortfolioId = "all",
   transactions,
   positions,
   zeroCostBuys,
@@ -65,7 +67,10 @@ export function TransactionsView({
   const router = useRouter();
   const holdingsPortfolios = portfolios.filter((p) => p.type === "holdings");
 
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("all");
+  const [selectedPortfolioId, setSelectedPortfolioId] =
+    useState<string>(defaultPortfolioId);
+  const [activeDefaultPortfolioId, setActiveDefaultPortfolioId] =
+    useState<string>(defaultPortfolioId);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("All");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -232,9 +237,7 @@ export function TransactionsView({
             className="h-10 px-3.5 text-[14px]"
           >
             <FolderPlus size={16} strokeWidth={1.75} aria-hidden="true" />
-            <span>
-              {selectedPortfolioId !== "all" ? "Rename Portfolio" : "Portfolios"}
-            </span>
+            <span>Portfolios</span>
           </Button>
 
           <Button
@@ -691,9 +694,22 @@ export function TransactionsView({
         isOpen={isPortfolioSheetOpen}
         portfolios={holdingsPortfolios}
         initialSelectedPortfolioId={selectedPortfolioId}
+        defaultPortfolioId={activeDefaultPortfolioId}
         onClose={() => setIsPortfolioSheetOpen(false)}
         onChanged={() => router.refresh()}
         onCreated={(id) => setSelectedPortfolioId(id)}
+        onDeleted={(deleted) => {
+          if (selectedPortfolioId === deleted.id) {
+            setSelectedPortfolioId("all");
+          }
+          if (activeDefaultPortfolioId === deleted.id) {
+            setActiveDefaultPortfolioId("all");
+          }
+        }}
+        onDefaultChanged={(nextDefaultId) => {
+          setActiveDefaultPortfolioId(nextDefaultId);
+          setSelectedPortfolioId(nextDefaultId);
+        }}
       />
 
       <CorporateActionsSheet

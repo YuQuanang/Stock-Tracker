@@ -9,7 +9,7 @@
  * so unit and integration tests can run against an isolated in-memory PGlite
  * instance.
  */
-import { and, asc, desc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { type Database, getDb } from "@/db/client";
 import {
   corporateAction,
@@ -34,8 +34,11 @@ import {
   formatInstantInOffset,
   FxRateBook,
   type LedgerTransactionInput,
+  ONE,
   parseCommissionInput,
   parseDateAndTimeWithOffset,
+  QUANTITY_EPSILON,
+  safeDivide,
   type SplitAction,
   toDecimal,
   toDecimalString,
@@ -217,19 +220,53 @@ export async function updatePortfolio(
   return updated;
 }
 
+/**
+ * Resolves the persisted `defaultPortfolioId` preference against the current
+ * list of portfolios, falling back to `"all"` if the portfolio is missing or
+ * is a watchlist.
+ */
+export function resolveDefaultPortfolioId(
+  rawDefaultPortfolioId: string | null | undefined,
+  portfolios: readonly Pick<Portfolio, "id" | "type">[],
+): string {
+  const trimmed = rawDefaultPortfolioId?.trim();
+  if (!trimmed || trimmed === "all") {
+    return "all";
+  }
+  const match = portfolios.find(
+    (item) => item.type === "holdings" && item.id === trimmed,
+  );
+  return match ? match.id : "all";
+}
+
 export async function deletePortfolio(
   id: string,
   db?: Database,
 ): Promise<void> {
   const database = db ?? (await getDb());
-  const deleted = await database
-    .delete(portfolio)
-    .where(eq(portfolio.id, id))
-    .returning({ id: portfolio.id });
 
-  if (deleted.length === 0) {
-    throw new LedgerUserError("Portfolio not found.", 404);
-  }
+  await database.transaction(async (txDb) => {
+    const txDatabase = txDb as unknown as Database;
+    const deleted = await txDatabase
+      .delete(portfolio)
+      .where(eq(portfolio.id, id))
+      .returning({ id: portfolio.id });
+
+    if (deleted.length === 0) {
+      throw new LedgerUserError("Portfolio not found.", 404);
+    }
+
+    // If the deleted portfolio was configured as the default view, fall back to "all".
+    await txDatabase
+      .update(settings)
+      .set({
+        defaultPortfolioId: "all",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(settings.id, 1), eq(settings.defaultPortfolioId, id)),
+      );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -877,7 +914,7 @@ export interface SaveTransactionInput {
   time?: string | null;
   /** Offset such as `"+0800"` (default `"+0800"`). */
   offset?: string;
-  currency?: "USD" | "SGD";
+  currency?: string;
   purchaseFxRate?: string | number | null;
   purchaseFxCurrencies?: string | null;
   priceAsOf?: string | Date | null;
@@ -1750,4 +1787,490 @@ export async function computeLedgerSummaries(
   }
 
   return { positions, zeroCostBuys };
+}
+
+// ---------------------------------------------------------------------------
+// Direct Portfolio Holding Adjustment (Reconciled in the FIFO Ledger)
+// ---------------------------------------------------------------------------
+
+export interface AdjustPortfolioHoldingInput {
+  portfolioId: string;
+  symbol: string;
+  instrumentName?: string | null;
+  exchangeCode?: string | null;
+  currency?: string;
+  targetShares: string | number;
+  targetAverageCost: string | number;
+  fxRateToSgd?: string | number | null;
+  notes?: string | null;
+}
+
+export interface AdjustPortfolioHoldingResult {
+  portfolioId: string;
+  instrumentId: string;
+  symbol: string;
+  sharesHeld: string;
+  averageCostPerShare: string | null;
+  openCostBasis: string;
+  realizedPnl: string;
+}
+
+function nextCalendarDayInstantSgd(isoDate: string): Date {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const nextUtc = new Date(Date.UTC(y, m - 1, d + 1));
+  const nextIso = nextUtc.toISOString().slice(0, 10);
+  return parseDateAndTimeWithOffset(nextIso, "00:00:00", "+0800").executedAt;
+}
+
+/**
+ * Directly adjusts a `(portfolio, symbol)` position to an exact target share
+ * count and average cost per share without requiring the user to enter manual
+ * Buy/Sell transactions.
+ *
+ * Preserves all historical closed trades, realized P&L, and dividends:
+ *  - Partially-sold Buy lots are trimmed to the exact historically consumed
+ *    share count so realized P&L stays unchanged to full decimal precision.
+ *  - Fully unmatched open Buy lots are consolidated/updated (preserving the
+ *    original open-lot date when no later sells or splits block it) or deleted
+ *    when `targetShares` is 0.
+ *  - Full cross-portfolio FIFO validation runs inside the database transaction
+ *    before committing.
+ */
+export async function adjustPortfolioHolding(
+  input: AdjustPortfolioHoldingInput,
+  db?: Database,
+): Promise<AdjustPortfolioHoldingResult> {
+  const database = db ?? (await getDb());
+  const targetShares = toDecimal(input.targetShares);
+  const targetAverageCost = toDecimal(input.targetAverageCost);
+
+  if (targetShares.isNegative()) {
+    throw new LedgerUserError("Shares held cannot be negative.", 400);
+  }
+  if (targetAverageCost.isNegative()) {
+    throw new LedgerUserError(
+      "Average cost per share cannot be negative.",
+      400,
+    );
+  }
+
+  let explicitFxDecimal = null;
+  if (
+    input.fxRateToSgd !== undefined &&
+    input.fxRateToSgd !== null &&
+    String(input.fxRateToSgd).trim() !== ""
+  ) {
+    explicitFxDecimal = toDecimal(input.fxRateToSgd);
+    if (!explicitFxDecimal.gt(ZERO)) {
+      throw new LedgerUserError(
+        "Exchange rate to SGD must be greater than zero.",
+        400,
+      );
+    }
+  }
+
+  const appSettings = await getOrCreateSettings(database);
+
+  return database.transaction(async (txDb) => {
+    const txDatabase = txDb as unknown as Database;
+
+    const [targetPortfolio] = await txDatabase
+      .select()
+      .from(portfolio)
+      .where(eq(portfolio.id, input.portfolioId))
+      .limit(1);
+
+    if (!targetPortfolio) {
+      throw new LedgerUserError("Selected portfolio was not found.", 404);
+    }
+    if (targetPortfolio.type === "watchlist") {
+      throw new LedgerUserError(
+        `"${targetPortfolio.name}" is a watchlist. Choose a holdings portfolio to edit holdings.`,
+        422,
+      );
+    }
+
+    const targetInstrument = await findOrCreateInstrument(
+      {
+        symbol: input.symbol,
+        name: input.instrumentName,
+        exchangeCode: input.exchangeCode,
+        currency: input.currency,
+      },
+      txDatabase,
+    );
+
+    const [evaluations, splitRows] = await Promise.all([
+      evaluateInstrumentAcrossPortfolios({
+        database: txDatabase,
+        instrumentId: targetInstrument.id,
+        symbol: targetInstrument.symbol,
+        dividendMode: appSettings.dividendMode,
+        onValidationError: "clamp-and-flag",
+      }),
+      txDatabase
+        .select()
+        .from(corporateAction)
+        .where(eq(corporateAction.instrumentId, targetInstrument.id))
+        .orderBy(asc(corporateAction.exDate)),
+    ]);
+
+    const portfolioEval = evaluations.find(
+      (entry) => entry.portfolioId === targetPortfolio.id,
+    );
+    const existingRows = portfolioEval?.rows ?? [];
+    const openLots = portfolioEval?.fifo.openLots ?? [];
+
+    const buyRowById = new Map<string, Transaction>();
+    for (const row of existingRows) {
+      if (row.type === "Buy") {
+        buyRowById.set(row.id, row);
+      }
+    }
+
+    const nonBuyOpenShares = openLots
+      .filter((lot) => !buyRowById.has(lot.buyTransactionId))
+      .reduce((acc, lot) => acc.plus(lot.remainingShares), ZERO);
+
+    if (nonBuyOpenShares.gt(QUANTITY_EPSILON)) {
+      throw new LedgerUserError(
+        "This holding includes reinvested dividend share lots. Switch Dividend Interpretation to Cash payout or edit individual transactions instead.",
+        422,
+      );
+    }
+
+    // Preserve weighted-average FX rate from existing open lots if caller did
+    // not explicitly override it (non-SGD holdings only).
+    const txCurrency = (input.currency ?? targetInstrument.currency).toUpperCase();
+    const isSgd = txCurrency === "SGD";
+    let inheritedFxDecimal = explicitFxDecimal;
+
+    if (!isSgd && !inheritedFxDecimal) {
+      let weightedFxSum = ZERO;
+      let weightSum = ZERO;
+      for (const lot of openLots) {
+        const srcRow = buyRowById.get(lot.buyTransactionId);
+        const rawFx = srcRow?.purchaseFxRate ?? srcRow?.fxRateToSgd ?? null;
+        if (rawFx && String(rawFx).trim() !== "") {
+          const fxDec = toDecimal(rawFx);
+          if (fxDec.gt(ZERO)) {
+            const weight = lot.remainingCostBasis.gt(ZERO)
+              ? lot.remainingCostBasis
+              : lot.remainingShares;
+            weightedFxSum = weightedFxSum.plus(fxDec.mul(weight));
+            weightSum = weightSum.plus(weight);
+          }
+        }
+      }
+      if (weightSum.gt(ZERO)) {
+        inheritedFxDecimal = weightedFxSum.div(weightSum);
+      } else {
+        const [latestFx] = await txDatabase
+          .select()
+          .from(fxRate)
+          .where(
+            and(
+              eq(fxRate.fromCurrency, txCurrency),
+              eq(fxRate.toCurrency, "SGD"),
+            ),
+          )
+          .orderBy(desc(fxRate.date))
+          .limit(1);
+        if (latestFx) {
+          const parsedFx = toDecimal(latestFx.rate);
+          if (parsedFx.gt(ZERO)) {
+            inheritedFxDecimal = parsedFx;
+          }
+        }
+      }
+    }
+
+    // Determine the latest Sell / symbol-wide Sell All instant and latest split date
+    // so any replacement open lot sits safely after all sells and corporate splits.
+    let latestSellInstant: Date | null = null;
+    for (const ev of evaluations) {
+      for (const row of ev.rows) {
+        const isBlockingSell =
+          row.type === "Sell All" ||
+          (ev.portfolioId === targetPortfolio.id && row.type === "Sell");
+        if (!isBlockingSell) {
+          continue;
+        }
+        const instant = new Date(row.executedAt);
+        if (!latestSellInstant || instant.getTime() > latestSellInstant.getTime()) {
+          latestSellInstant = instant;
+        }
+      }
+    }
+
+    const latestSplitExDate =
+      splitRows.length > 0 ? splitRows[splitRows.length - 1].exDate : null;
+    const minSplitSafeInstant = latestSplitExDate
+      ? nextCalendarDayInstantSgd(latestSplitExDate)
+      : null;
+
+    // Partition open Buy lots into partially-consumed (must trim to consumed
+    // shares to preserve historical realized P&L) vs 100% unmatched.
+    const unmatchedBuyRows: Transaction[] = [];
+    let earliestOpenLotInstant: Date | null = null;
+
+    for (const lot of openLots) {
+      const srcRow = buyRowById.get(lot.buyTransactionId);
+      if (!srcRow) {
+        continue;
+      }
+
+      const lotInstant = new Date(srcRow.executedAt);
+      if (
+        !earliestOpenLotInstant ||
+        lotInstant.getTime() < earliestOpenLotInstant.getTime()
+      ) {
+        earliestOpenLotInstant = lotInstant;
+      }
+
+      const isFullyUnmatched = lot.remainingShares
+        .minus(lot.initialShares)
+        .abs()
+        .lte(QUANTITY_EPSILON);
+
+      if (isFullyUnmatched) {
+        unmatchedBuyRows.push(srcRow);
+        continue;
+      }
+
+      // Partially consumed by prior Sells: trim this Buy row to the exact
+      // historically sold fraction so realized P&L is preserved identically.
+      const openFraction =
+        safeDivide(lot.remainingShares, lot.initialShares) ?? ZERO;
+      const consumedFraction = ONE.minus(openFraction);
+      const originalQty = toDecimal(srcRow.quantity);
+      const trimmedQty = originalQty.mul(consumedFraction);
+
+      let nextCommissionRaw = srcRow.commissionRaw;
+      let nextCommissionValue = srcRow.commissionValue;
+      if (!srcRow.commissionIsPercent && srcRow.commissionValue) {
+        const scaledComm = toDecimal(srcRow.commissionValue).mul(
+          consumedFraction,
+        );
+        nextCommissionValue = toDecimalString(scaledComm, 12);
+        nextCommissionRaw = toDecimalString(scaledComm, 6);
+      }
+
+      const trimmedDedupeHash = computeTransactionDedupeHash({
+        portfolioName: targetPortfolio.name,
+        symbol: targetInstrument.symbol,
+        type: "Buy",
+        quantity: trimmedQty,
+        price: toDecimal(srcRow.price),
+        executedAt: new Date(srcRow.executedAt),
+      });
+
+      await txDatabase
+        .update(transaction)
+        .set({
+          quantity: toDecimalString(trimmedQty, 12),
+          commissionRaw: nextCommissionRaw,
+          commissionValue: nextCommissionValue,
+          dedupeHash: trimmedDedupeHash,
+          updatedAt: new Date(),
+        })
+        .where(eq(transaction.id, srcRow.id));
+    }
+
+    unmatchedBuyRows.sort(
+      (a, b) =>
+        new Date(a.executedAt).getTime() - new Date(b.executedAt).getTime(),
+    );
+
+    // Choose whether to reuse the earliest unmatched Buy row in place (to keep
+    // row history tidy) and delete any redundant unmatched Buy rows.
+    const reusableBuyRow =
+      targetShares.gt(ZERO) && unmatchedBuyRows.length > 0
+        ? unmatchedBuyRows[0]
+        : null;
+    const rowsToDelete = unmatchedBuyRows.filter(
+      (row) => !reusableBuyRow || row.id !== reusableBuyRow.id,
+    );
+
+    if (rowsToDelete.length > 0) {
+      await txDatabase
+        .delete(transaction)
+        .where(
+          inArray(
+            transaction.id,
+            rowsToDelete.map((row) => row.id),
+          ),
+        );
+    }
+
+    if (targetShares.gt(ZERO)) {
+      // Determine a timestamp that preserves original holding start date when
+      // safe, and otherwise lands strictly after the latest Sell / Sell All and
+      // latest corporate split so no historical event alters the target lot.
+      const now = new Date();
+      let targetInstant = earliestOpenLotInstant ?? now;
+      let targetOffset = reusableBuyRow?.originalOffset ?? "+0800";
+
+      if (
+        latestSellInstant &&
+        targetInstant.getTime() <= latestSellInstant.getTime()
+      ) {
+        targetInstant = new Date(latestSellInstant.getTime() + 60_000);
+        targetOffset = "+0800";
+      }
+
+      if (
+        minSplitSafeInstant &&
+        targetInstant.getTime() < minSplitSafeInstant.getTime()
+      ) {
+        targetInstant = minSplitSafeInstant;
+        targetOffset = "+0800";
+      }
+
+      // Double-check localDate against latestSplitExDate in case timezone offset
+      // puts the instant on the split date itself.
+      if (latestSplitExDate) {
+        const { localDate } = formatInstantInOffset(targetInstant, targetOffset);
+        if (localDate <= latestSplitExDate) {
+          targetInstant = nextCalendarDayInstantSgd(latestSplitExDate);
+          targetOffset = "+0800";
+        }
+      }
+
+      const effectiveFxDecimal = isSgd ? ONE : inheritedFxDecimal;
+      const fxRateToSgdStr = effectiveFxDecimal
+        ? toDecimalString(effectiveFxDecimal, 12)
+        : null;
+      const purchaseFxRateStr = !isSgd && fxRateToSgdStr ? fxRateToSgdStr : null;
+      const purchaseFxCurrenciesStr =
+        !isSgd && purchaseFxRateStr ? `${txCurrency}/SGD` : null;
+      const totalCostSgdStr = effectiveFxDecimal
+        ? toDecimalString(
+            targetShares.mul(targetAverageCost).mul(effectiveFxDecimal),
+            12,
+          )
+        : null;
+      const fxSourceStr = isSgd
+        ? "native-sgd"
+        : explicitFxDecimal
+          ? "manual"
+          : effectiveFxDecimal
+            ? "historical"
+            : null;
+
+      const dedupeHash = computeTransactionDedupeHash({
+        portfolioName: targetPortfolio.name,
+        symbol: targetInstrument.symbol,
+        type: "Buy",
+        quantity: targetShares,
+        price: targetAverageCost,
+        executedAt: targetInstant,
+      });
+
+      const adjustmentNotes = input.notes?.trim() || "Holding adjustment";
+
+      await txDatabase
+        .insert(portfolioInstrument)
+        .values({
+          portfolioId: targetPortfolio.id,
+          instrumentId: targetInstrument.id,
+        })
+        .onConflictDoNothing();
+
+      if (reusableBuyRow) {
+        await txDatabase
+          .update(transaction)
+          .set({
+            quantity: toDecimalString(targetShares, 12),
+            price: toDecimalString(targetAverageCost, 12),
+            commissionRaw: "0",
+            commissionValue: "0",
+            commissionIsPercent: false,
+            executedAt: targetInstant,
+            originalOffset: targetOffset,
+            currency: txCurrency,
+            purchaseFxRate: purchaseFxRateStr,
+            purchaseFxCurrencies: purchaseFxCurrenciesStr,
+            priceAsOf: null,
+            priceStatus: "manual",
+            fxRateToSgd: fxRateToSgdStr,
+            fxAsOf: isSgd ? targetInstant : now,
+            fxSource: fxSourceStr,
+            totalCostSgd: totalCostSgdStr,
+            isManualPrice: true,
+            isManualFxRate: Boolean(explicitFxDecimal),
+            notes: adjustmentNotes,
+            dedupeHash,
+            updatedAt: now,
+          })
+          .where(eq(transaction.id, reusableBuyRow.id));
+      } else {
+        await txDatabase.insert(transaction).values({
+          portfolioId: targetPortfolio.id,
+          instrumentId: targetInstrument.id,
+          type: "Buy",
+          quantity: toDecimalString(targetShares, 12),
+          price: toDecimalString(targetAverageCost, 12),
+          commissionRaw: "0",
+          commissionValue: "0",
+          commissionIsPercent: false,
+          executedAt: targetInstant,
+          originalOffset: targetOffset,
+          currency: txCurrency,
+          purchaseFxRate: purchaseFxRateStr,
+          purchaseFxCurrencies: purchaseFxCurrenciesStr,
+          priceAsOf: null,
+          priceStatus: "manual",
+          fxRateToSgd: fxRateToSgdStr,
+          fxAsOf: isSgd ? targetInstant : now,
+          fxSource: fxSourceStr,
+          totalCostSgd: totalCostSgdStr,
+          isManualPrice: true,
+          isManualFxRate: Boolean(explicitFxDecimal),
+          accountingMethod: null,
+          notes: adjustmentNotes,
+          dedupeHash,
+        });
+      }
+    }
+
+    const verified = await assertInstrumentLedgerValid({
+      database: txDatabase,
+      portfolioId: targetPortfolio.id,
+      instrumentId: targetInstrument.id,
+      symbol: targetInstrument.symbol,
+      dividendMode: appSettings.dividendMode,
+    });
+
+    if (verified.sharesHeld.minus(targetShares).abs().gt(QUANTITY_EPSILON)) {
+      throw new LedgerUserError(
+        "Unable to reconcile open shares cleanly for this holding.",
+        422,
+      );
+    }
+
+    if (targetShares.gt(ZERO)) {
+      const expectedCostBasis = targetShares.mul(targetAverageCost);
+      if (verified.openCostBasis.minus(expectedCostBasis).abs().gt(toDecimal("0.001"))) {
+        throw new LedgerUserError(
+          "Unable to reconcile average cost basis cleanly for this holding.",
+          422,
+        );
+      }
+    }
+
+    const resultingAvg = verified.sharesHeld.gt(ZERO)
+      ? safeDivide(verified.openCostBasis, verified.sharesHeld)
+      : null;
+
+    return {
+      portfolioId: targetPortfolio.id,
+      instrumentId: targetInstrument.id,
+      symbol: targetInstrument.symbol,
+      sharesHeld: toDecimalString(verified.sharesHeld, 8),
+      averageCostPerShare: toNullableDecimalString(resultingAvg, 6),
+      openCostBasis: toDecimalString(verified.openCostBasis, 4),
+      realizedPnl: toDecimalString(verified.realizedPnl, 4),
+    };
+  });
 }

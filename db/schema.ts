@@ -94,6 +94,8 @@ export const settings = pgTable(
       .notNull()
       .default("0.035"),
     defaultBenchmark: text("default_benchmark").notNull().default("VOO"),
+    // "all" or a holdings portfolio UUID displayed by default across views.
+    defaultPortfolioId: text("default_portfolio_id").notNull().default("all"),
     costBasisMethod: text("cost_basis_method").notNull().default("FIFO"),
     // How to read the "Shares Owned" field on Dividend rows (see CSV spec 7.4).
     dividendMode: dividendModeEnum("dividend_mode").notNull().default("cash"),

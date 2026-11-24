@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "default_portfolio_id" text DEFAULT 'all' NOT NULL;

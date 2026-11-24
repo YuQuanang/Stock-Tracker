@@ -264,6 +264,16 @@ export function SettingsView({
     }
   }
 
+  const [portfoliosList, setPortfoliosList] =
+    useState<Portfolio[]>(initialPortfolios);
+  const holdingsPortfolios = portfoliosList.filter((p) => p.type === "holdings");
+  const resolvedDefaultPortfolioId =
+    savedSettings.defaultPortfolioId &&
+    savedSettings.defaultPortfolioId !== "all" &&
+    holdingsPortfolios.some((p) => p.id === savedSettings.defaultPortfolioId)
+      ? savedSettings.defaultPortfolioId
+      : "all";
+
   const currentTheme = savedSettings.theme as ThemePreference;
   const currentGainScheme = savedSettings.gainColorScheme as GainColorScheme;
 
@@ -300,6 +310,44 @@ export function SettingsView({
           Portfolio &amp; Calculations
         </h2>
         <Card className="divide-y divide-line">
+          <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 sm:py-4.5">
+            <div className="min-w-0 max-w-md">
+              <label
+                htmlFor="settings-default-portfolio"
+                className="font-medium text-ink"
+              >
+                Default Portfolio Displayed
+              </label>
+              <p className="text-[13.5px] text-ink-2">
+                Initial portfolio selected when opening Dashboard, Holdings,
+                Benchmarks, and Transactions.
+              </p>
+            </div>
+            <SettingsSelect
+              id="settings-default-portfolio"
+              value={resolvedDefaultPortfolioId}
+              disabled={isSaving}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                if (nextId !== resolvedDefaultPortfolioId) {
+                  void persistPatch(
+                    { defaultPortfolioId: nextId },
+                    "Default portfolio",
+                  );
+                }
+              }}
+            >
+              <option value="all">
+                All Portfolios ({holdingsPortfolios.length})
+              </option>
+              {holdingsPortfolios.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </SettingsSelect>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 sm:py-4.5">
             <div className="min-w-0 max-w-md">
               <p className="font-medium text-ink">Base Currency</p>
@@ -488,16 +536,21 @@ export function SettingsView({
 
           <div className="space-y-3 px-4 py-4 sm:px-6 sm:py-4.5">
             <div>
-              <p className="font-medium text-ink">Portfolio Names</p>
+              <p className="font-medium text-ink">Portfolios &amp; Watchlists</p>
               <p className="text-[13.5px] text-ink-2">
-                Rename any holdings portfolio or watchlist across your ledger
-                and exports.
+                Rename or delete any holdings portfolio or watchlist across your
+                ledger and exports.
               </p>
             </div>
             <PortfolioRenameList
-              portfolios={initialPortfolios}
+              portfolios={portfoliosList}
+              defaultPortfolioId={resolvedDefaultPortfolioId}
               showTypeBadge
+              allowDelete
               onRenamed={(updated) => {
+                setPortfoliosList((prev) =>
+                  prev.map((p) => (p.id === updated.id ? updated : p)),
+                );
                 setSaveError(null);
                 setSaveStatus(`Renamed portfolio to "${updated.name}"`);
                 if (statusTimerRef.current) {
@@ -506,6 +559,28 @@ export function SettingsView({
                 statusTimerRef.current = setTimeout(() => {
                   setSaveStatus(null);
                 }, 2200);
+                router.refresh();
+              }}
+              onDeleted={(deleted) => {
+                setPortfoliosList((prev) =>
+                  prev.filter((p) => p.id !== deleted.id),
+                );
+                if (savedSettings.defaultPortfolioId === deleted.id) {
+                  const nextSettings = {
+                    ...latestSettingsRef.current,
+                    defaultPortfolioId: "all",
+                  };
+                  latestSettingsRef.current = nextSettings;
+                  setSavedSettings(nextSettings);
+                }
+                setSaveError(null);
+                setSaveStatus(`Deleted portfolio "${deleted.name}"`);
+                if (statusTimerRef.current) {
+                  clearTimeout(statusTimerRef.current);
+                }
+                statusTimerRef.current = setTimeout(() => {
+                  setSaveStatus(null);
+                }, 2800);
                 router.refresh();
               }}
               emptyMessage="No portfolios or watchlists created yet."

@@ -12,6 +12,7 @@ import {
   Coins,
   FileUp,
   Info,
+  Pencil,
   Plus,
   RefreshCw,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { AllocationDonut } from "@/components/charts/allocation-donut";
 import { MoneyInvestedChart } from "@/components/charts/money-invested-chart";
 import { PortfolioValueChart } from "@/components/charts/portfolio-value-chart";
 import { Sparkline } from "@/components/charts/sparkline";
+import { PortfolioManageSheet } from "@/components/portfolios/portfolio-manage-sheet";
 import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
@@ -274,6 +276,9 @@ export function DashboardView({
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>(
     initialSnapshot.scope.portfolioFilterId,
   );
+  const [activeDefaultPortfolioId, setActiveDefaultPortfolioId] =
+    useState<string>(initialSnapshot.settings.defaultPortfolioId || "all");
+  const [isPortfolioSheetOpen, setIsPortfolioSheetOpen] = useState(false);
   const [selectedCurrency, setSelectedCurrency] = useState<"SGD" | "USD">(
     initialSnapshot.scope.currency,
   );
@@ -615,6 +620,16 @@ export function DashboardView({
                 aria-hidden="true"
               />
             </div>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsPortfolioSheetOpen(true)}
+              aria-label="Manage portfolios"
+            >
+              <Pencil size={14} strokeWidth={1.85} aria-hidden="true" />
+              <span>Portfolios</span>
+            </Button>
 
             <SegmentedControl
               ariaLabel="Dashboard comparison currency"
@@ -1574,6 +1589,48 @@ export function DashboardView({
           </div>
         </div>
       </div>
+
+      <PortfolioManageSheet
+        isOpen={isPortfolioSheetOpen}
+        portfolios={snapshot.portfolios}
+        initialSelectedPortfolioId={selectedPortfolioId}
+        defaultPortfolioId={activeDefaultPortfolioId}
+        onClose={() => setIsPortfolioSheetOpen(false)}
+        onChanged={() => {
+          snapshotCacheRef.current.clear();
+          void loadAnalyticsScope({
+            portfolioId: selectedPortfolioId,
+            currency: selectedCurrency,
+          });
+        }}
+        onCreated={(newId) => {
+          snapshotCacheRef.current.clear();
+          void loadAnalyticsScope({
+            portfolioId: newId,
+            currency: selectedCurrency,
+          });
+        }}
+        onDeleted={(deleted) => {
+          snapshotCacheRef.current.clear();
+          const nextScopeId =
+            selectedPortfolioId === deleted.id ? "all" : selectedPortfolioId;
+          if (activeDefaultPortfolioId === deleted.id) {
+            setActiveDefaultPortfolioId("all");
+          }
+          void loadAnalyticsScope({
+            portfolioId: nextScopeId,
+            currency: selectedCurrency,
+          });
+        }}
+        onDefaultChanged={(nextDefaultId) => {
+          setActiveDefaultPortfolioId(nextDefaultId);
+          snapshotCacheRef.current.clear();
+          void loadAnalyticsScope({
+            portfolioId: nextDefaultId,
+            currency: selectedCurrency,
+          });
+        }}
+      />
     </div>
   );
 }

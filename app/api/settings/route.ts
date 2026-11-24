@@ -13,6 +13,15 @@ const patchSettingsSchema = z.object({
     .regex(/^(\d+\.?\d*|\.\d+)$/, "Risk-free rate must be numeric.")
     .optional(),
   defaultBenchmark: z.string().trim().min(1).max(24).optional(),
+  defaultPortfolioId: z
+    .union([
+      z.literal("all"),
+      z
+        .string()
+        .trim()
+        .uuid("Default portfolio must be 'all' or a valid portfolio ID."),
+    ])
+    .optional(),
   costBasisMethod: z.enum(["FIFO"]).optional(),
   dividendMode: z.enum(["cash", "shares"]).optional(),
   theme: z.enum(["system", "light", "dark"]).optional(),

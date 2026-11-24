@@ -33,6 +33,7 @@ export interface UpdateSettingsPatch {
   baseCurrency?: "SGD" | "USD";
   riskFreeRate?: string;
   defaultBenchmark?: string;
+  defaultPortfolioId?: string;
   costBasisMethod?: "FIFO";
   dividendMode?: "cash" | "shares";
   theme?: "system" | "light" | "dark";
@@ -75,6 +76,27 @@ export async function updateSettings(
       throw new LedgerUserError("Default benchmark symbol is required.", 422);
     }
     updates.defaultBenchmark = cleaned;
+  }
+
+  if (patch.defaultPortfolioId !== undefined) {
+    const cleanedId = patch.defaultPortfolioId.trim();
+    if (!cleanedId || cleanedId === "all") {
+      updates.defaultPortfolioId = "all";
+    } else {
+      const [found] = await database
+        .select({ id: portfolio.id, type: portfolio.type })
+        .from(portfolio)
+        .where(eq(portfolio.id, cleanedId))
+        .limit(1);
+
+      if (!found || found.type !== "holdings") {
+        throw new LedgerUserError(
+          "Selected default portfolio must be an existing holdings portfolio.",
+          422,
+        );
+      }
+      updates.defaultPortfolioId = found.id;
+    }
   }
 
   if (patch.costBasisMethod !== undefined) {

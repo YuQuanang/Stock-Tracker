@@ -18,6 +18,7 @@ import {
 } from "@/components/charts/benchmark-comparison-chart";
 import { DrawdownChart } from "@/components/charts/drawdown-chart";
 import { MoneyInvestedChart } from "@/components/charts/money-invested-chart";
+import { Button } from "@/components/ui/button";
 import { ButtonLink } from "@/components/ui/button-link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -373,7 +374,36 @@ export function BenchmarksView({
         }
         actions={
           <>
-            <ButtonLink href="/import-export">
+            {!snapshot.accountHasNoTransactions &&
+              selectedPortfolioId !== "all" && (
+                <Button
+                  onClick={() => {
+                    const allTracked = [
+                      ...new Set([
+                        ...PRESET_BENCHMARKS.map((p) => p.symbol),
+                        ...customSymbols,
+                        ...selectedSymbols,
+                      ]),
+                    ];
+                    void reloadAnalytics({
+                      portfolioId: "all",
+                      currency: selectedCurrency,
+                      benchmarksList: allTracked,
+                    });
+                  }}
+                >
+                  View All Portfolios
+                </Button>
+              )}
+            <ButtonLink
+              href="/import-export"
+              variant={
+                !snapshot.accountHasNoTransactions &&
+                selectedPortfolioId !== "all"
+                  ? "secondary"
+                  : "primary"
+              }
+            >
               <FileUp size={18} strokeWidth={1.75} aria-hidden="true" />
               Import my CSV
             </ButtonLink>

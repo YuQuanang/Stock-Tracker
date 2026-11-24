@@ -18,6 +18,7 @@ export default async function HoldingsPage() {
       />
       <HoldingsView
         portfolios={snapshot.portfolios}
+        defaultPortfolioId={snapshot.defaultPortfolioId}
         buckets={snapshot.buckets}
         initialQuotes={snapshot.initialQuotes}
         initialFxUsdToSgd={snapshot.initialFxUsdToSgd}

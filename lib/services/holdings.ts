@@ -65,10 +65,12 @@ import {
   listEnrichedTransactions,
   listPortfolios,
   mapDbTransactionToFifoInput,
+  resolveDefaultPortfolioId,
 } from "@/lib/services/ledger";
 
 export interface HoldingsPageSnapshot {
   portfolios: Portfolio[];
+  defaultPortfolioId: string;
   buckets: SerializedFifoBucket[];
   initialQuotes: Record<string, ResolvedInstrumentQuote>;
   initialFxUsdToSgd: ExchangeRateSnapshot | null;
@@ -90,6 +92,7 @@ export interface StockDetailSnapshot {
     priceNotFoundReason: string | null;
   };
   portfolios: Portfolio[];
+  defaultPortfolioId: string;
   buckets: SerializedFifoBucket[];
   transactions: EnrichedTransactionRow[];
   corporateActions: EnrichedCorporateAction[];
@@ -467,11 +470,16 @@ export async function getHoldingsPageSnapshot(
     await backfillMissingTransactionSgdTotals({ db: database });
   }
 
-  const [portfolios, { buckets, baseCurrency, latestCachedUsdSgd }] =
-    await Promise.all([
-      listPortfolios(database),
-      loadSerializedFifoBuckets({ db: database }),
-    ]);
+  const [portfolios, fifoSnapshot] = await Promise.all([
+    listPortfolios(database),
+    loadPortfolioFifoSnapshot({ db: database }),
+  ]);
+  const { buckets, baseCurrency, latestCachedUsdSgd, appSettings } =
+    fifoSnapshot;
+  const defaultPortfolioId = resolveDefaultPortfolioId(
+    appSettings.defaultPortfolioId,
+    portfolios,
+  );
 
   const uniqueSymbols = [...new Set(buckets.map((b) => b.symbol))];
   const now = new Date();
@@ -550,6 +558,7 @@ export async function getHoldingsPageSnapshot(
 
   return {
     portfolios,
+    defaultPortfolioId,
     buckets,
     initialQuotes,
     initialFxUsdToSgd: liveFx,
@@ -592,7 +601,7 @@ export async function getStockDetailSnapshot(
   const [
     historyFiveYear,
     portfolios,
-    { buckets, baseCurrency, latestCachedUsdSgd },
+    fifoSnapshot,
     transactions,
     allActions,
     quotesMap,
@@ -606,7 +615,7 @@ export async function getStockDetailSnapshot(
       now,
     }),
     listPortfolios(database),
-    loadSerializedFifoBuckets({
+    loadPortfolioFifoSnapshot({
       instrumentId: targetInstr.id,
       db: database,
     }),
@@ -640,6 +649,18 @@ export async function getStockDetailSnapshot(
       : fetchInstrumentFundamentals(targetInstr.symbol, { now }),
     fetchExchangeRateToSgd({ from: "USD", now }).catch(() => null),
   ]);
+
+  const { buckets, baseCurrency, latestCachedUsdSgd, appSettings } =
+    fifoSnapshot;
+  const resolvedAccountDefaultPortfolioId = resolveDefaultPortfolioId(
+    appSettings.defaultPortfolioId,
+    portfolios,
+  );
+  const defaultPortfolioId =
+    resolvedAccountDefaultPortfolioId !== "all" &&
+    buckets.some((b) => b.portfolioId === resolvedAccountDefaultPortfolioId)
+      ? resolvedAccountDefaultPortfolioId
+      : "all";
 
   const liveFx: ExchangeRateSnapshot | null =
     fetchedLiveFx ??
@@ -695,6 +716,7 @@ export async function getStockDetailSnapshot(
       priceNotFoundReason: targetInstr.priceNotFoundReason ?? null,
     },
     portfolios,
+    defaultPortfolioId,
     buckets,
     transactions,
     corporateActions,

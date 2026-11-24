@@ -529,7 +529,8 @@ export async function computePortfolioAnalytics(
 
   const holdingsPortfolios = allPortfolios.filter((p) => p.type === "holdings");
 
-  const requestedFilterId = options.portfolioId?.trim() || "all";
+  const requestedFilterId =
+    options.portfolioId?.trim() || appSettings.defaultPortfolioId || "all";
   const matchedPortfolio =
     requestedFilterId === "all"
       ? null

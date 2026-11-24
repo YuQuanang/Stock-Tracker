@@ -6,17 +6,23 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
+  adjustPortfolioHolding,
   computeLedgerSummaries,
   createCorporateSplit,
   createPortfolio,
   createTransaction,
+  deletePortfolio,
   deleteTransaction,
   getEnrichedTransactionById,
+  getOrCreateSettings,
   LedgerUserError,
   listEnrichedTransactions,
+  listPortfolios,
+  resolveDefaultPortfolioId,
   updatePortfolio,
   updateTransaction,
 } from "@/lib/services/ledger";
+import { updateSettings } from "@/lib/services/settings";
 
 const migrationsFolder = path.join(import.meta.dirname, "..", "..", "db", "migrations");
 
@@ -478,6 +484,210 @@ describe("Ledger service CRUD and FIFO rollback invariants", () => {
     expect(summary.positions).toHaveLength(1);
     expect(summary.positions[0]?.portfolioId).toBe(alt.id);
     expect(summary.positions[0]?.sharesHeld).toBe("4");
+  });
+
+  it("deletes a portfolio, cascades its transactions, and resets defaultPortfolioId to all when needed", async () => {
+    const p1 = await createPortfolio(
+      { name: "Core US", type: "holdings", defaultCurrency: "USD" },
+      db,
+    );
+    const p2 = await createPortfolio(
+      { name: "SG Income", type: "holdings", defaultCurrency: "SGD" },
+      db,
+    );
+
+    await createTransaction(
+      {
+        portfolioId: p1.id,
+        symbol: "AAPL",
+        type: "Buy",
+        quantity: "10",
+        price: "190",
+        date: "2025-01-10",
+      },
+      db,
+    );
+    await createTransaction(
+      {
+        portfolioId: p2.id,
+        symbol: "D05.SI",
+        type: "Buy",
+        quantity: "100",
+        price: "40",
+        currency: "SGD",
+        date: "2025-02-10",
+      },
+      db,
+    );
+
+    const updatedSettings = await updateSettings(
+      { defaultPortfolioId: p1.id },
+      db,
+    );
+    expect(updatedSettings.defaultPortfolioId).toBe(p1.id);
+    expect(
+      resolveDefaultPortfolioId(updatedSettings.defaultPortfolioId, [p1, p2]),
+    ).toBe(p1.id);
+
+    await deletePortfolio(p1.id, db);
+
+    const remainingPortfolios = await listPortfolios(db);
+    expect(remainingPortfolios.map((p) => p.id)).toEqual([p2.id]);
+
+    const remainingTxs = await listEnrichedTransactions({}, db);
+    expect(remainingTxs).toHaveLength(1);
+    expect(remainingTxs[0]?.portfolioId).toBe(p2.id);
+
+    const settingsAfterDelete = await getOrCreateSettings(db);
+    expect(settingsAfterDelete.defaultPortfolioId).toBe("all");
+    expect(
+      resolveDefaultPortfolioId(p1.id, remainingPortfolios),
+    ).toBe("all");
+
+    await expect(
+      deletePortfolio("00000000-0000-4000-8000-000000000099", db),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("directly edits current holdings (shares & avg cost) while preserving closed trades, splits, and realized P&L", async () => {
+    const us = await createPortfolio(
+      { name: "US Stocks", type: "holdings", defaultCurrency: "USD" },
+      db,
+    );
+    const watchlist = await createPortfolio(
+      { name: "Watchlist", type: "watchlist", defaultCurrency: "USD" },
+      db,
+    );
+
+    // Case 1: Single open Buy lot -> preserves original date and updates shares & avg cost cleanly
+    await createTransaction(
+      {
+        portfolioId: us.id,
+        symbol: "AAPL",
+        instrumentName: "Apple Inc.",
+        type: "Buy",
+        quantity: "5",
+        price: "180",
+        commission: "5",
+        currency: "USD",
+        date: "2024-03-15",
+        fxRateToSgd: "1.34",
+      },
+      db,
+    );
+
+    const adjusted1 = await adjustPortfolioHolding(
+      {
+        portfolioId: us.id,
+        symbol: "AAPL",
+        targetShares: "12.5",
+        targetAverageCost: "192.40",
+      },
+      db,
+    );
+    expect(adjusted1.sharesHeld).toBe("12.5");
+    expect(Number(adjusted1.averageCostPerShare)).toBeCloseTo(192.4, 6);
+    expect(Number(adjusted1.openCostBasis)).toBeCloseTo(2405, 4);
+
+    const aaplTxs = await listEnrichedTransactions({ portfolioId: us.id }, db);
+    expect(aaplTxs).toHaveLength(1);
+    expect(aaplTxs[0]?.localDate).toBe("2024-03-15");
+    expect(Number(aaplTxs[0]?.fxRateToSgd)).toBeCloseTo(1.34, 4);
+
+    // Case 2: Partial sell + stock split -> preserves exact historical realized P&L
+    await createTransaction(
+      {
+        portfolioId: us.id,
+        symbol: "NVDA",
+        type: "Buy",
+        quantity: "10",
+        price: "1000",
+        commission: "10", // total $10,010 -> $1,001/pre-split sh -> $100.10/post-split sh
+        date: "2024-05-01",
+      },
+      db,
+    );
+    await createCorporateSplit(
+      {
+        symbol: "NVDA",
+        exDate: "2024-06-10",
+        ratioNumerator: 10,
+        ratioDenominator: 1,
+      },
+      db,
+    );
+    await createTransaction(
+      {
+        portfolioId: us.id,
+        symbol: "NVDA",
+        type: "Sell",
+        quantity: "40",
+        price: "130",
+        date: "2024-07-01",
+      },
+      db,
+    );
+
+    // Realized P&L before edit: 40 * 130 - 40 * 100.10 = 5200 - 4004 = 1196
+    const beforeNvda = (await computeLedgerSummaries(us.id, db)).positions.find(
+      (p) => p.symbol === "NVDA",
+    );
+    expect(beforeNvda?.sharesHeld).toBe("60");
+    expect(Number(beforeNvda?.realizedPnl)).toBeCloseTo(1196, 4);
+
+    // Edit remaining open NVDA holding directly to 75 shares @ $112.50
+    const adjustedNvda = await adjustPortfolioHolding(
+      {
+        portfolioId: us.id,
+        symbol: "NVDA",
+        targetShares: "75",
+        targetAverageCost: "112.50",
+      },
+      db,
+    );
+    expect(adjustedNvda.sharesHeld).toBe("75");
+    expect(Number(adjustedNvda.averageCostPerShare)).toBeCloseTo(112.5, 6);
+    expect(Number(adjustedNvda.openCostBasis)).toBeCloseTo(8437.5, 4);
+    expect(Number(adjustedNvda.realizedPnl)).toBeCloseTo(1196, 4);
+
+    // Case 3: Setting targetShares to 0 clears open lots while preserving realized P&L
+    const clearedNvda = await adjustPortfolioHolding(
+      {
+        portfolioId: us.id,
+        symbol: "NVDA",
+        targetShares: "0",
+        targetAverageCost: "0",
+      },
+      db,
+    );
+    expect(clearedNvda.sharesHeld).toBe("0");
+    expect(clearedNvda.averageCostPerShare).toBeNull();
+    expect(Number(clearedNvda.realizedPnl)).toBeCloseTo(1196, 4);
+
+    // Case 4: Validation rejects watchlist and negative values
+    await expect(
+      adjustPortfolioHolding(
+        {
+          portfolioId: watchlist.id,
+          symbol: "AAPL",
+          targetShares: "10",
+          targetAverageCost: "150",
+        },
+        db,
+      ),
+    ).rejects.toThrow(/watchlist/i);
+
+    await expect(
+      adjustPortfolioHolding(
+        {
+          portfolioId: us.id,
+          symbol: "AAPL",
+          targetShares: "-5",
+          targetAverageCost: "150",
+        },
+        db,
+      ),
+    ).rejects.toThrow(/cannot be negative/i);
   });
 });
 

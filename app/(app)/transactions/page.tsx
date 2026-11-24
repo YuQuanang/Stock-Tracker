@@ -6,9 +6,11 @@ import { syncPortfolioDividends } from "@/lib/services/dividends";
 import { backfillMissingTransactionSgdTotals } from "@/lib/services/fx-sgd";
 import {
   computeLedgerSummaries,
+  getOrCreateSettings,
   listCorporateActions,
   listEnrichedTransactions,
   listPortfolios,
+  resolveDefaultPortfolioId,
 } from "@/lib/services/ledger";
 
 export const metadata: Metadata = { title: "Transactions" };
@@ -21,13 +23,19 @@ export default async function TransactionsPage() {
   await syncPortfolioDividends();
   await backfillMissingTransactionSgdTotals();
 
-  const [portfolios, transactions, summary, corporateActions] =
+  const [appSettings, portfolios, transactions, summary, corporateActions] =
     await Promise.all([
+      getOrCreateSettings(),
       listPortfolios(),
       listEnrichedTransactions(),
       computeLedgerSummaries(),
       listCorporateActions(),
     ]);
+
+  const defaultPortfolioId = resolveDefaultPortfolioId(
+    appSettings.defaultPortfolioId,
+    portfolios,
+  );
 
   return (
     <>
@@ -37,6 +45,7 @@ export default async function TransactionsPage() {
       />
       <TransactionsView
         portfolios={portfolios}
+        defaultPortfolioId={defaultPortfolioId}
         transactions={transactions}
         positions={summary.positions}
         zeroCostBuys={summary.zeroCostBuys}
